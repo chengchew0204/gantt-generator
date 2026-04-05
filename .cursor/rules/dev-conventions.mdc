@@ -1,0 +1,25 @@
+---
+description: GanttGen coding standards and development conventions
+alwaysApply: true
+---
+
+# Development Conventions
+
+## General
+
+- All code, comments, and console output must be written in English.
+- Never use emojis in source code, comments, or console logs.
+- Create documentation only when necessary; store all docs in `obsidian/`.
+- Prefer editing existing files over creating new ones.
+
+## Code style
+
+- Keep functions focused and small.
+- Avoid redundant comments that merely restate what the code does.
+- Comments should only explain non-obvious intent, trade-offs, or constraints.
+
+## Commit messages
+
+- Use the imperative mood: "Add feature", "Fix bug", "Refactor module".
+- Keep the subject line under 72 characters.
+- Reference the relevant backlog item or decision when applicable.

@@ -1,0 +1,521 @@
+import { useState, useRef, useEffect, useCallback } from 'react';
+import {
+  Table2,
+  Plus,
+  Trash2,
+  ChevronRight,
+  ChevronDown,
+  Columns3,
+} from 'lucide-react';
+
+const ROW_HEIGHT = 32;
+const HEADER_HEIGHT = 56;
+const MIN_COL_WIDTH = 32;
+
+const STATUS_OPTIONS = [
+  'Not Started',
+  'In Progress',
+  'Completed',
+  'Blocked',
+  'Delayed',
+  'Pending',
+];
+
+const DEFAULT_COL_WIDTHS = {
+  id: 32,
+  name: 140,
+  dependency: 70,
+  category: 70,
+  startDate: 88,
+  endDate: 88,
+  duration: 56,
+  progress: 80,
+  status: 76,
+  owner: 70,
+  remarks: 80,
+  baselineStart: 88,
+  baselineEnd: 88,
+  parentId: 56,
+};
+
+function getColW(widths, key) {
+  return widths[key] ?? DEFAULT_COL_WIDTHS[key] ?? 70;
+}
+
+export default function DataTable({
+  tasks,
+  allTasks,
+  columns,
+  visibleColumns,
+  onToggleColumn,
+  collapsedParents,
+  onToggleCollapse,
+  onUpdateTask,
+  onAddTask,
+  onDeleteTask,
+  scrollTop,
+  onScroll,
+  selectedTaskId,
+  onSelectTask,
+  headerHeight: headerHeightProp,
+}) {
+  const headerH = headerHeightProp || HEADER_HEIGHT;
+  const [showColumnPicker, setShowColumnPicker] = useState(false);
+  const [hScrollLeft, setHScrollLeft] = useState(0);
+  const [colWidths, setColWidths] = useState(DEFAULT_COL_WIDTHS);
+  const pickerRef = useRef(null);
+  const scrollRef = useRef(null);
+  const suppressScroll = useRef(false);
+
+  useEffect(() => {
+    if (!showColumnPicker) return;
+    const handler = (e) => {
+      if (pickerRef.current && !pickerRef.current.contains(e.target)) {
+        setShowColumnPicker(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showColumnPicker]);
+
+  useEffect(() => {
+    if (scrollRef.current && scrollTop != null) {
+      if (Math.abs(scrollRef.current.scrollTop - scrollTop) > 1) {
+        suppressScroll.current = true;
+        scrollRef.current.scrollTop = scrollTop;
+      }
+    }
+  }, [scrollTop]);
+
+  const handleScroll = useCallback(() => {
+    if (scrollRef.current) {
+      setHScrollLeft(scrollRef.current.scrollLeft);
+    }
+    if (suppressScroll.current) {
+      suppressScroll.current = false;
+      return;
+    }
+    if (scrollRef.current && onScroll) {
+      onScroll(scrollRef.current.scrollTop);
+    }
+  }, [onScroll]);
+
+  const handleResizeCol = useCallback((colKey, startX, startWidth) => {
+    const onMove = (e) => {
+      const newW = Math.max(MIN_COL_WIDTH, startWidth + (e.clientX - startX));
+      setColWidths((prev) => ({ ...prev, [colKey]: newW }));
+    };
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }, []);
+
+  const cols = columns.filter((c) => visibleColumns.has(c.key));
+
+  if (tasks.length === 0 && (!allTasks || allTasks.length === 0)) {
+    return (
+      <div className="flex flex-col h-full">
+        <div className="flex-1 flex flex-col items-center justify-center gap-3 px-6">
+          <div
+            className="flex items-center justify-center w-12 h-12 rounded-xl"
+            style={{ backgroundColor: 'var(--color-accent-muted)' }}
+          >
+            <Table2 size={22} style={{ color: 'var(--color-accent)' }} />
+          </div>
+          <p className="text-sm font-medium" style={{ color: 'var(--color-text-secondary)' }}>
+            No tasks loaded
+          </p>
+          <p className="text-xs text-center max-w-[200px]" style={{ color: 'var(--color-text-muted)' }}>
+            Import an Excel file or download a template to get started.
+          </p>
+        </div>
+        <AddRowBar onAddTask={onAddTask} />
+      </div>
+    );
+  }
+
+  const totalMinWidth = 6 + 32 + cols.reduce((sum, c) => sum + getColW(colWidths, c.key), 0);
+
+  return (
+    <div className="flex flex-col h-full">
+      {/* Header */}
+      <div
+        className="flex-shrink-0 overflow-hidden"
+        style={{
+          height: headerH,
+          backgroundColor: 'var(--color-bg-secondary)',
+          borderBottom: '1px solid var(--color-border)',
+        }}
+      >
+        <div
+          className="flex items-center text-xs font-medium whitespace-nowrap h-full"
+          style={{ minWidth: totalMinWidth, color: 'var(--color-text-muted)', transform: `translateX(${-hScrollLeft}px)` }}
+        >
+          <div className="w-6 flex-shrink-0 px-1" />
+          {cols.map((col) => (
+            <ResizableHeaderCell
+              key={col.key}
+              col={col}
+              width={getColW(colWidths, col.key)}
+              onResizeStart={handleResizeCol}
+            />
+          ))}
+          <div className="flex-1" />
+          <div className="w-8 flex-shrink-0 px-1 relative" ref={pickerRef}>
+            <button
+              onClick={() => setShowColumnPicker((v) => !v)}
+              className="p-0.5 rounded cursor-pointer transition-colors"
+              style={{ color: 'var(--color-text-muted)' }}
+              title="Toggle columns"
+            >
+              <Columns3 size={12} />
+            </button>
+            {showColumnPicker && (
+              <ColumnPicker columns={columns} visibleColumns={visibleColumns} onToggle={onToggleColumn} />
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Body */}
+      <div ref={scrollRef} className="flex-1 overflow-auto" onScroll={handleScroll}>
+        <div style={{ minWidth: totalMinWidth }}>
+          {tasks.map((task) => (
+            <TaskRow
+              key={task.id}
+              task={task}
+              cols={cols}
+              colWidths={colWidths}
+              isParent={!!task.isParent}
+              isCollapsed={collapsedParents.has(String(task.id))}
+              hasParent={!!task.parentId}
+              onToggleCollapse={onToggleCollapse}
+              onUpdateTask={onUpdateTask}
+              onDeleteTask={onDeleteTask}
+              selected={String(task.id) === String(selectedTaskId)}
+              onSelect={onSelectTask}
+            />
+          ))}
+        </div>
+      </div>
+      <AddRowBar onAddTask={onAddTask} />
+    </div>
+  );
+}
+
+function ResizableHeaderCell({ col, width, onResizeStart }) {
+  const handleMouseDown = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    onResizeStart(col.key, e.clientX, width);
+  };
+
+  return (
+    <div
+      className="flex-shrink-0 relative flex items-center"
+      style={{ width, maxWidth: width }}
+    >
+      <span className="px-2 truncate flex-1">{col.label}</span>
+      <div
+        onMouseDown={handleMouseDown}
+        className="absolute right-0 top-0 h-full w-[5px] cursor-col-resize z-10"
+        style={{ borderRight: '1px solid var(--color-border-subtle)' }}
+      />
+    </div>
+  );
+}
+
+function TaskRow({
+  task,
+  cols,
+  colWidths,
+  isParent,
+  isCollapsed,
+  hasParent,
+  onToggleCollapse,
+  onUpdateTask,
+  onDeleteTask,
+  selected,
+  onSelect,
+}) {
+  const [hovering, setHovering] = useState(false);
+
+  const bgColor = selected
+    ? 'var(--color-accent-muted)'
+    : hovering
+      ? 'var(--color-bg-hover)'
+      : 'transparent';
+
+  return (
+    <div
+      className="flex items-center transition-colors w-full"
+      style={{
+        height: ROW_HEIGHT,
+        minHeight: ROW_HEIGHT,
+        maxHeight: ROW_HEIGHT,
+        borderBottom: '1px solid var(--color-border-subtle)',
+        backgroundColor: bgColor,
+        borderLeft: selected ? '2px solid var(--color-accent)' : '2px solid transparent',
+      }}
+      onMouseEnter={() => setHovering(true)}
+      onMouseLeave={() => setHovering(false)}
+      onClick={() => { if (onSelect) onSelect(String(task.id)); }}
+    >
+      <div className="w-6 flex-shrink-0 px-1 flex items-center justify-center">
+        {isParent ? (
+          <button
+            onClick={() => onToggleCollapse(String(task.id))}
+            className="p-0.5 cursor-pointer rounded transition-colors"
+            style={{ color: 'var(--color-text-muted)' }}
+          >
+            {isCollapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
+          </button>
+        ) : hasParent ? (
+          <span className="text-[10px]" style={{ color: 'var(--color-border)' }}>&mdash;</span>
+        ) : null}
+      </div>
+      {cols.map((col) => {
+        const w = getColW(colWidths, col.key);
+        return (
+          <div key={col.key} className="flex-shrink-0 overflow-hidden" style={{ width: w, maxWidth: w }}>
+            <EditableCell task={task} col={col} isParent={isParent} onUpdateTask={onUpdateTask} />
+          </div>
+        );
+      })}
+      <div className="flex-1" />
+      <div className="w-8 flex-shrink-0 px-1 flex items-center justify-center">
+        {hovering && (
+          <button
+            onClick={() => onDeleteTask(task.id)}
+            className="p-0.5 rounded cursor-pointer transition-colors"
+            style={{ color: 'var(--color-text-muted)' }}
+            title="Delete task"
+          >
+            <Trash2 size={12} />
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function EditableCell({ task, col, isParent, onUpdateTask }) {
+  const [editing, setEditing] = useState(false);
+  const inputRef = useRef(null);
+
+  const value = task[col.key];
+
+  useEffect(() => {
+    if (editing && inputRef.current) {
+      inputRef.current.focus();
+      if (inputRef.current.select) inputRef.current.select();
+    }
+  }, [editing]);
+
+  const commit = (newVal) => {
+    setEditing(false);
+    if (col.type === 'number') {
+      const n = parseFloat(newVal);
+      onUpdateTask(task.id, col.key, Number.isFinite(n) ? n : 0);
+    } else {
+      onUpdateTask(task.id, col.key, newVal);
+    }
+  };
+
+  if (col.key === 'id') {
+    return (
+      <span
+        className="block px-2 tabular-nums text-xs truncate"
+        style={{ color: 'var(--color-text-muted)', fontWeight: isParent ? 600 : 400, lineHeight: `${ROW_HEIGHT}px` }}
+      >
+        {value}
+      </span>
+    );
+  }
+
+  if (isParent && (col.key === 'startDate' || col.key === 'endDate' || col.key === 'progress' || col.key === 'duration')) {
+    return <ReadOnlyDisplay col={col} value={value} isParent />;
+  }
+
+  if (col.key === 'status' || col.type === 'status') {
+    return <StatusSelect value={value} onChange={(v) => onUpdateTask(task.id, col.key, v)} />;
+  }
+
+  if (!editing) {
+    return (
+      <button
+        onClick={() => setEditing(true)}
+        className="block w-full text-left px-2 text-xs cursor-text truncate"
+        style={{
+          color: value ? 'var(--color-text-primary)' : 'var(--color-text-muted)',
+          fontWeight: col.key === 'name' && isParent ? 600 : col.key === 'name' ? 500 : 400,
+          lineHeight: `${ROW_HEIGHT}px`,
+          height: ROW_HEIGHT,
+        }}
+        title={String(value || '')}
+      >
+        {col.type === 'number'
+          ? col.key === 'progress'
+            ? <ProgressBar value={value} />
+            : `${value ?? 0}`
+          : value || '\u00A0'}
+      </button>
+    );
+  }
+
+  if (col.type === 'date') {
+    return (
+      <input
+        ref={inputRef}
+        type="date"
+        defaultValue={value || ''}
+        onBlur={(e) => commit(e.target.value || null)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') commit(e.target.value || null);
+          if (e.key === 'Escape') setEditing(false);
+        }}
+        className="w-full px-2 text-xs outline-none"
+        style={{
+          height: ROW_HEIGHT - 2,
+          backgroundColor: 'var(--color-bg-tertiary)',
+          color: 'var(--color-text-primary)',
+          border: '1px solid var(--color-accent)',
+          borderRadius: 4,
+        }}
+      />
+    );
+  }
+
+  return (
+    <input
+      ref={inputRef}
+      type={col.type === 'number' ? 'number' : 'text'}
+      defaultValue={value ?? ''}
+      onBlur={(e) => commit(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') commit(e.target.value);
+        if (e.key === 'Escape') setEditing(false);
+      }}
+      className="w-full px-2 text-xs outline-none"
+      style={{
+        height: ROW_HEIGHT - 2,
+        backgroundColor: 'var(--color-bg-tertiary)',
+        color: 'var(--color-text-primary)',
+        border: '1px solid var(--color-accent)',
+        borderRadius: 4,
+      }}
+    />
+  );
+}
+
+function ReadOnlyDisplay({ col, value, isParent }) {
+  if (col.key === 'progress') {
+    return (
+      <div className="px-2 flex items-center" style={{ height: ROW_HEIGHT }}>
+        <ProgressBar value={value} />
+      </div>
+    );
+  }
+  return (
+    <span
+      className="block px-2 tabular-nums text-xs truncate"
+      style={{
+        color: 'var(--color-text-secondary)',
+        fontWeight: isParent ? 600 : 400,
+        lineHeight: `${ROW_HEIGHT}px`,
+      }}
+    >
+      {col.type === 'number' ? `${value ?? 0}` : value || '-'}
+    </span>
+  );
+}
+
+function StatusSelect({ value, onChange }) {
+  return (
+    <select
+      value={value || ''}
+      onChange={(e) => onChange(e.target.value)}
+      className="w-full text-[10px] outline-none cursor-pointer appearance-none truncate"
+      style={{
+        height: 20,
+        padding: '0 4px',
+        backgroundColor: 'var(--color-bg-tertiary)',
+        color: 'var(--color-text-primary)',
+        border: '1px solid var(--color-border)',
+        borderRadius: 3,
+      }}
+    >
+      <option value="">--</option>
+      {STATUS_OPTIONS.map((s) => (
+        <option key={s} value={s}>{s}</option>
+      ))}
+    </select>
+  );
+}
+
+function ProgressBar({ value }) {
+  const pct = Math.min(100, Math.max(0, value || 0));
+  return (
+    <div className="flex items-center gap-2">
+      <div className="h-1.5 w-14 rounded-full overflow-hidden" style={{ backgroundColor: 'var(--color-bg-tertiary)' }}>
+        <div
+          className="h-full rounded-full transition-all"
+          style={{
+            width: `${pct}%`,
+            backgroundColor: pct >= 100 ? 'var(--color-success)' : pct > 0 ? 'var(--color-accent)' : 'var(--color-bg-tertiary)',
+          }}
+        />
+      </div>
+      <span className="tabular-nums text-xs" style={{ color: 'var(--color-text-muted)' }}>{pct}%</span>
+    </div>
+  );
+}
+
+function ColumnPicker({ columns, visibleColumns, onToggle }) {
+  return (
+    <div
+      className="absolute right-0 top-6 z-50 rounded-lg shadow-lg py-1 min-w-[160px]"
+      style={{ backgroundColor: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
+    >
+      <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--color-text-muted)' }}>
+        Columns
+      </div>
+      {columns.map((col) => (
+        <label
+          key={col.key}
+          className="flex items-center gap-2 px-3 py-1 cursor-pointer text-xs transition-colors"
+          style={{ color: 'var(--color-text-secondary)' }}
+          onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)')}
+          onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
+        >
+          <input type="checkbox" checked={visibleColumns.has(col.key)} onChange={() => onToggle(col.key)} className="accent-[var(--color-accent)]" />
+          {col.label}
+        </label>
+      ))}
+    </div>
+  );
+}
+
+function AddRowBar({ onAddTask }) {
+  return (
+    <div className="flex-shrink-0 px-3 py-2" style={{ borderTop: '1px solid var(--color-border-subtle)' }}>
+      <button
+        onClick={onAddTask}
+        className="flex items-center gap-1.5 px-2 py-1 rounded text-xs font-medium cursor-pointer transition-colors"
+        style={{ color: 'var(--color-text-muted)', backgroundColor: 'transparent' }}
+        onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)'; e.currentTarget.style.color = 'var(--color-accent)'; }}
+        onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = 'var(--color-text-muted)'; }}
+      >
+        <Plus size={12} />
+        Add task
+      </button>
+    </div>
+  );
+}

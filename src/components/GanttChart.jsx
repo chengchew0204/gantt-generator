@@ -1,0 +1,690 @@
+import { useState, useMemo, useRef, useCallback, useEffect } from 'react';
+import { BarChart3, Calendar, CalendarDays, ZoomIn, ZoomOut } from 'lucide-react';
+
+const ROW_HEIGHT = 32;
+const HEADER_HEIGHT = 56;
+const TOOLBAR_HEIGHT = 28;
+const WEEK_LABEL_HEIGHT = 18;
+const BAR_HEIGHT = 16;
+const BASELINE_HEIGHT = 4;
+const SUMMARY_HEIGHT = 8;
+
+const ZOOM_DEFAULT = 100;
+const ZOOM_MIN = 25;
+const ZOOM_MAX = 200;
+const ZOOM_STEP = 10;
+const BASE_UNIT_AT_100 = 32;
+
+function toBool(v) {
+  if (typeof v === 'boolean') return v;
+  return v !== 'false' && v !== false;
+}
+
+export default function GanttChart({ tasks, allTasks, viewOptions = {}, scrollTop, onScroll, onUpdateTask, onUpdateTaskFields, selectedTaskId, onSelectTask, categoryColors = {} }) {
+  const [scale, setScale] = useState('day');
+  const [zoomPct, setZoomPct] = useState(ZOOM_DEFAULT);
+  const [zoomInput, setZoomInput] = useState(String(ZOOM_DEFAULT));
+  const [hScrollLeft, setHScrollLeft] = useState(0);
+  const scrollRef = useRef(null);
+  const suppressScroll = useRef(false);
+
+  const show = {
+    criticalPath: toBool(viewOptions.showCriticalPath ?? true),
+    slack: toBool(viewOptions.showSlack ?? true),
+    dependencies: toBool(viewOptions.showDependencies ?? true),
+    todayLine: toBool(viewOptions.showTodayLine ?? true),
+    baseline: toBool(viewOptions.showBaseline ?? true),
+    scaleButtons: toBool(viewOptions.showScaleButtons ?? true),
+    weekLabels: toBool(viewOptions.showWeekLabels ?? false),
+    monthLabels: toBool(viewOptions.showMonthLabels ?? true),
+    dayLabels: toBool(viewOptions.showDayLabels ?? true),
+  };
+
+  const applyZoom = useCallback((pct) => {
+    const clamped = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(pct)));
+    setZoomPct(clamped);
+    setZoomInput(String(clamped));
+  }, []);
+
+  const handleZoomStep = useCallback((direction) => {
+    setZoomPct((prev) => {
+      const next = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, prev + direction * ZOOM_STEP));
+      setZoomInput(String(next));
+      return next;
+    });
+  }, []);
+
+  const handleZoomInputChange = (e) => {
+    const raw = e.target.value;
+    setZoomInput(raw);
+    const parsed = parseInt(raw, 10);
+    if (!isNaN(parsed) && parsed >= ZOOM_MIN && parsed <= ZOOM_MAX) {
+      setZoomPct(parsed);
+    }
+  };
+
+  const handleZoomInputCommit = () => {
+    const parsed = parseInt(zoomInput, 10);
+    if (!isNaN(parsed)) {
+      applyZoom(parsed);
+    } else {
+      setZoomInput(String(zoomPct));
+    }
+  };
+
+  const baseUnit = Math.max(4, Math.round(BASE_UNIT_AT_100 * zoomPct / 100));
+  const unitWidth = scale === 'day' ? baseUnit : Math.round(baseUnit * 0.56);
+
+  const { minDate, totalDays } = useMemo(() => {
+    const src = allTasks?.length > 0 ? allTasks : tasks;
+    if (src.length === 0) {
+      return { minDate: todayIso(), totalDays: 1 };
+    }
+    const min = getMinDate(src);
+    const max = getMaxDate(src);
+    return { minDate: min, totalDays: daysBetween(min, max) + 1 };
+  }, [tasks, allTasks]);
+
+  const taskIndex = useMemo(() => {
+    const map = new Map();
+    tasks.forEach((t, i) => map.set(String(t.id), i));
+    return map;
+  }, [tasks]);
+
+  const deps = useMemo(() => {
+    if (!show.dependencies || tasks.length === 0) return [];
+    const edges = [];
+    for (const task of tasks) {
+      if (!task.dependency) continue;
+      const preds = String(task.dependency).split(',').map((s) => s.trim()).filter(Boolean);
+      for (const predId of preds) {
+        if (taskIndex.has(predId) && taskIndex.has(String(task.id))) {
+          edges.push({ from: predId, to: String(task.id) });
+        }
+      }
+    }
+    return edges;
+  }, [tasks, taskIndex, show.dependencies]);
+
+  useEffect(() => {
+    if (scrollRef.current && scrollTop != null) {
+      if (Math.abs(scrollRef.current.scrollTop - scrollTop) > 1) {
+        suppressScroll.current = true;
+        scrollRef.current.scrollTop = scrollTop;
+      }
+    }
+  }, [scrollTop]);
+
+  const handleScroll = useCallback(() => {
+    if (!scrollRef.current) return;
+    setHScrollLeft(scrollRef.current.scrollLeft);
+    if (suppressScroll.current) {
+      suppressScroll.current = false;
+      return;
+    }
+    if (onScroll) {
+      onScroll(scrollRef.current.scrollTop);
+    }
+  }, [onScroll]);
+
+  if (tasks.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full gap-3 px-6">
+        <div className="flex items-center justify-center w-12 h-12 rounded-xl" style={{ backgroundColor: 'var(--color-accent-muted)' }}>
+          <BarChart3 size={22} style={{ color: 'var(--color-accent)' }} />
+        </div>
+        <p className="text-sm font-medium" style={{ color: 'var(--color-text-secondary)' }}>No chart data</p>
+        <p className="text-xs text-center max-w-[200px]" style={{ color: 'var(--color-text-muted)' }}>Import tasks to render the Gantt chart.</p>
+      </div>
+    );
+  }
+
+  const dataWidth = totalDays * unitWidth;
+  const bodyHeight = tasks.length * ROW_HEIGHT;
+  const containerWidth = scrollRef.current?.clientWidth || 0;
+  const chartWidth = Math.max(dataWidth, containerWidth, 600);
+  const toolbarH = show.scaleButtons ? TOOLBAR_HEIGHT : 0;
+  const timelineH = HEADER_HEIGHT - TOOLBAR_HEIGHT;
+
+  return (
+    <div className="flex flex-col h-full">
+      {/* Toolbar: scale + zoom */}
+      {show.scaleButtons && (
+        <div
+          className="flex items-center gap-2 px-3 flex-shrink-0 justify-between"
+          style={{ height: TOOLBAR_HEIGHT, borderBottom: '1px solid var(--color-border-subtle)', backgroundColor: 'var(--color-bg-secondary)' }}
+        >
+          <div className="flex items-center gap-1">
+            <ScaleButton active={scale === 'day'} onClick={() => setScale('day')} icon={Calendar} label="Day" />
+            <ScaleButton active={scale === 'week'} onClick={() => setScale('week')} icon={CalendarDays} label="Week" />
+          </div>
+          <div className="flex items-center gap-1">
+            <ZoomButton icon={ZoomOut} onClick={() => handleZoomStep(-1)} disabled={zoomPct <= ZOOM_MIN} />
+            <input
+              type="number"
+              value={zoomInput}
+              min={ZOOM_MIN}
+              max={ZOOM_MAX}
+              onChange={handleZoomInputChange}
+              onBlur={handleZoomInputCommit}
+              onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+              className="tabular-nums text-center font-medium bg-transparent outline-none border-b"
+              style={{
+                width: 38,
+                fontSize: 10,
+                color: 'var(--color-text-secondary)',
+                borderColor: 'var(--color-border)',
+                MozAppearance: 'textfield',
+              }}
+            />
+            <span className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>%</span>
+            <ZoomButton icon={ZoomIn} onClick={() => handleZoomStep(1)} disabled={zoomPct >= ZOOM_MAX} />
+          </div>
+        </div>
+      )}
+
+      {/* Week number labels (W1, W2, W3...) */}
+      {show.weekLabels && (
+        <div className="flex-shrink-0 overflow-hidden" style={{ height: WEEK_LABEL_HEIGHT, backgroundColor: 'var(--color-bg-secondary)', borderBottom: '1px solid var(--color-border-subtle)' }}>
+          <svg
+            width={Math.max(chartWidth, dataWidth)}
+            height={WEEK_LABEL_HEIGHT}
+            className="block"
+            style={{ transform: `translateX(${-hScrollLeft}px)` }}
+          >
+            <WeekLabels minDate={minDate} totalDays={totalDays} unitWidth={unitWidth} chartWidth={chartWidth} height={WEEK_LABEL_HEIGHT} />
+          </svg>
+        </div>
+      )}
+
+      {/* Timeline date header (fixed, synced horizontally) */}
+      {(show.monthLabels || show.dayLabels) && (
+        <div className="flex-shrink-0 overflow-hidden" style={{ height: timelineH, backgroundColor: 'var(--color-bg-secondary)', borderBottom: '1px solid var(--color-border)' }}>
+          <svg
+            width={Math.max(chartWidth, dataWidth)}
+            height={timelineH}
+            className="block"
+            style={{ transform: `translateX(${-hScrollLeft}px)` }}
+          >
+            <TimelineHeader minDate={minDate} totalDays={totalDays} unitWidth={unitWidth} scale={scale} headerHeight={timelineH} chartWidth={chartWidth} showMonthLabels={show.monthLabels} showDayLabels={show.dayLabels} />
+          </svg>
+        </div>
+      )}
+
+      {/* Scrollable body with grid background + task bars */}
+      <div ref={scrollRef} className="flex-1 overflow-auto" onScroll={handleScroll}>
+        <svg width="100%" height={bodyHeight} className="block" style={{ minWidth: chartWidth }}
+          onMouseDown={() => { if (onSelectTask) onSelectTask(null); }}>
+          <defs>
+            <marker id="arrowhead" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto">
+              <path d="M0,0 L6,2.5 L0,5 Z" fill="var(--color-text-muted)" opacity="0.6" />
+            </marker>
+          </defs>
+
+          <BodyGrid minDate={minDate} totalDays={totalDays} unitWidth={unitWidth} bodyHeight={bodyHeight} chartWidth={chartWidth} scale={scale} />
+
+          {tasks.map((task, i) => {
+            const y = i * ROW_HEIGHT;
+            return (
+              <g key={task.id}>
+                <line x1={0} y1={y + ROW_HEIGHT} x2={chartWidth} y2={y + ROW_HEIGHT} stroke="var(--color-border-subtle)" strokeWidth={1} />
+
+                {show.baseline && task.baselineStart && task.baselineEnd && (
+                  <BaselineBar task={task} y={y} minDate={minDate} unitWidth={unitWidth} />
+                )}
+
+                {task.isParent ? (
+                  <SummaryBar task={task} y={y} minDate={minDate} unitWidth={unitWidth} />
+                ) : task.duration === 0 ? (
+                  <MilestoneDiamond task={task} y={y} minDate={minDate} unitWidth={unitWidth} showCritical={show.criticalPath} onUpdateTaskFields={onUpdateTaskFields} selected={String(task.id) === String(selectedTaskId)} onSelect={onSelectTask} categoryColors={categoryColors} />
+                ) : (
+                  <TaskBar task={task} y={y} minDate={minDate} unitWidth={unitWidth} showCritical={show.criticalPath} showSlack={show.slack} onUpdateTaskFields={onUpdateTaskFields} selected={String(task.id) === String(selectedTaskId)} onSelect={onSelectTask} categoryColors={categoryColors} />
+                )}
+              </g>
+            );
+          })}
+
+          {deps.map((dep, i) => (
+            <DependencyArrow key={`${dep.from}-${dep.to}-${i}`} dep={dep} tasks={tasks} taskIndex={taskIndex} minDate={minDate} unitWidth={unitWidth} />
+          ))}
+
+          {show.todayLine && <TodayLine minDate={minDate} unitWidth={unitWidth} chartHeight={bodyHeight} />}
+        </svg>
+      </div>
+    </div>
+  );
+}
+
+function ScaleButton({ active, onClick, icon: Icon, label }) {
+  return (
+    <button onClick={onClick}
+      className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium cursor-pointer transition-colors"
+      style={{ backgroundColor: active ? 'var(--color-accent-muted)' : 'transparent', color: active ? 'var(--color-accent)' : 'var(--color-text-muted)' }}>
+      <Icon size={11} />{label}
+    </button>
+  );
+}
+
+function ZoomButton({ icon: Icon, onClick, disabled }) {
+  return (
+    <button onClick={onClick} disabled={disabled}
+      className="p-0.5 rounded cursor-pointer transition-colors disabled:opacity-30 disabled:cursor-default"
+      style={{ color: 'var(--color-text-muted)' }}>
+      <Icon size={12} />
+    </button>
+  );
+}
+
+function TimelineHeader({ minDate, totalDays, unitWidth, scale, headerHeight, chartWidth, showMonthLabels = true, showDayLabels = true }) {
+  const labels = [];
+  const base = parseLocal(minDate);
+  const visibleDays = Math.ceil((chartWidth || totalDays * unitWidth) / unitWidth) + 1;
+  const drawDays = Math.max(totalDays, visibleDays);
+
+  if (scale === 'day') {
+    let lastMonth = -1;
+    for (let i = 0; i < drawDays; i++) {
+      const d = new Date(base);
+      d.setDate(d.getDate() + i);
+      const x = i * unitWidth;
+      const isWeekend = d.getDay() === 0 || d.getDay() === 6;
+      const dayLabel = d.getDate();
+      const month = d.getMonth();
+      const showMonth = month !== lastMonth;
+      const showDay = unitWidth >= 16;
+
+      if (showMonth) lastMonth = month;
+
+      const monthName = d.toLocaleDateString('en-US', { month: 'short' });
+      const showYear = d.getMonth() === 0 || i === 0;
+      const monthText = showYear ? `${monthName} ${d.getFullYear()}` : monthName;
+
+      labels.push(
+        <g key={i}>
+          {isWeekend && <rect x={x} y={0} width={unitWidth} height={headerHeight} fill="var(--color-bg-tertiary)" opacity={0.4} />}
+          {showMonthLabels && showMonth && <text x={x + 3} y={11} fill="var(--color-text-muted)" fontSize={8} fontWeight={600}>{monthText}</text>}
+          {showDayLabels && showDay && <text x={x + unitWidth / 2} y={headerHeight - 3} fill={isWeekend ? 'var(--color-text-muted)' : 'var(--color-text-secondary)'} fontSize={8} textAnchor="middle" opacity={isWeekend ? 0.5 : 0.8}>{dayLabel}</text>}
+        </g>,
+      );
+    }
+  } else {
+    const startDate = new Date(base);
+    let weekStart = new Date(startDate);
+    weekStart.setDate(weekStart.getDate() - weekStart.getDay() + 1);
+    let weekIndex = 0;
+    const totalW = chartWidth || drawDays * unitWidth;
+    let lastMonth = -1;
+    while (daysBetween(toLocalIso(startDate), toLocalIso(weekStart)) < drawDays + 7) {
+      const dayOffset = daysBetween(minDate, toLocalIso(weekStart));
+      const x = dayOffset * unitWidth;
+      if (x >= -unitWidth * 7 && x < totalW + unitWidth * 7) {
+        const month = weekStart.getMonth();
+        const showMonth = month !== lastMonth;
+        if (showMonth) lastMonth = month;
+        const monthName = weekStart.toLocaleDateString('en-US', { month: 'short' });
+        const showYear = weekStart.getMonth() === 0 || weekIndex === 0;
+        const monthText = showYear ? `${monthName} ${weekStart.getFullYear()}` : monthName;
+        labels.push(
+          <g key={weekIndex}>
+            {showMonthLabels && showMonth && <text x={Math.max(x, 0) + 3} y={11} fill="var(--color-text-muted)" fontSize={8} fontWeight={600}>{monthText}</text>}
+            {showDayLabels && <text x={x + 3} y={headerHeight - 3} fill="var(--color-text-secondary)" fontSize={7} opacity={0.8}>{weekStart.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' })}</text>}
+          </g>,
+        );
+      }
+      weekStart.setDate(weekStart.getDate() + 7);
+      weekIndex++;
+      if (weekIndex > 200) break;
+    }
+  }
+
+  const fullWidth = chartWidth || drawDays * unitWidth;
+  return (
+    <g>
+      <rect x={0} y={0} width={fullWidth} height={headerHeight} fill="var(--color-bg-secondary)" />
+      {labels}
+    </g>
+  );
+}
+
+function WeekLabels({ minDate, totalDays, unitWidth, chartWidth, height }) {
+  const labels = [];
+  const base = parseLocal(minDate);
+  const visibleDays = Math.ceil((chartWidth || totalDays * unitWidth) / unitWidth) + 1;
+  const drawDays = Math.max(totalDays, visibleDays);
+  const weekWidth = 7 * unitWidth;
+
+  // Find the Monday on or before the project start
+  let weekStart = new Date(base);
+  weekStart.setDate(weekStart.getDate() - ((weekStart.getDay() + 6) % 7));
+
+  let weekNum = 1;
+  const limit = Math.ceil(drawDays / 7) + 2;
+
+  for (let i = 0; i < limit; i++) {
+    const dayOffset = daysBetween(minDate, toLocalIso(weekStart));
+    const x = dayOffset * unitWidth;
+    const fullWidth = chartWidth || drawDays * unitWidth;
+
+    if (x + weekWidth >= 0 && x < fullWidth) {
+      labels.push(
+        <g key={i}>
+          <rect x={x} y={0} width={weekWidth} height={height} fill="transparent" />
+          <line x1={x} y1={0} x2={x} y2={height} stroke="var(--color-border-subtle)" strokeWidth={1} opacity={0.5} />
+          <text x={x + 4} y={height - 4} fill="var(--color-text-muted)" fontSize={9} fontWeight={500}>
+            W{weekNum}
+          </text>
+        </g>,
+      );
+    }
+
+    weekStart.setDate(weekStart.getDate() + 7);
+    weekNum++;
+  }
+
+  const fullWidth = chartWidth || drawDays * unitWidth;
+  return (
+    <g>
+      <rect x={0} y={0} width={fullWidth} height={height} fill="var(--color-bg-secondary)" />
+      {labels}
+    </g>
+  );
+}
+
+function BodyGrid({ minDate, totalDays, unitWidth, bodyHeight, chartWidth, scale }) {
+  const lines = [];
+  const base = parseLocal(minDate);
+  const visibleDays = Math.ceil(chartWidth / unitWidth) + 1;
+  const drawDays = Math.max(totalDays, visibleDays);
+
+  if (scale === 'day') {
+    for (let i = 0; i < drawDays; i++) {
+      const d = new Date(base);
+      d.setDate(d.getDate() + i);
+      const x = i * unitWidth;
+      const isWeekend = d.getDay() === 0 || d.getDay() === 6;
+
+      if (isWeekend) {
+        lines.push(<rect key={`w${i}`} x={x} y={0} width={unitWidth} height={bodyHeight} fill="var(--color-bg-tertiary)" opacity={0.4} />);
+      }
+      lines.push(<line key={`l${i}`} x1={x} y1={0} x2={x} y2={bodyHeight} stroke="var(--color-border-subtle)" strokeWidth={1} opacity={0.3} />);
+    }
+  } else {
+    const startDate = new Date(base);
+    let weekStart = new Date(startDate);
+    weekStart.setDate(weekStart.getDate() - weekStart.getDay() + 1);
+    let weekIndex = 0;
+    while (daysBetween(toLocalIso(startDate), toLocalIso(weekStart)) < drawDays + 7) {
+      const dayOffset = daysBetween(minDate, toLocalIso(weekStart));
+      const x = dayOffset * unitWidth;
+      if (x >= 0 && x < chartWidth) {
+        lines.push(<line key={`wk${weekIndex}`} x1={x} y1={0} x2={x} y2={bodyHeight} stroke="var(--color-border-subtle)" strokeWidth={1} opacity={0.4} />);
+      }
+      weekStart.setDate(weekStart.getDate() + 7);
+      weekIndex++;
+      if (weekIndex > 200) break;
+    }
+  }
+
+  return <g>{lines}</g>;
+}
+
+function TaskBar({ task, y, minDate, unitWidth, showCritical, showSlack, onUpdateTaskFields, selected, onSelect, categoryColors = {} }) {
+  if (!task.startDate || !task.endDate) return null;
+  const startOffset = daysBetween(minDate, task.startDate);
+  const duration = daysBetween(task.startDate, task.endDate) + 1;
+  const x = startOffset * unitWidth;
+  const width = Math.max(duration * unitWidth - 2, 4);
+  const barY = y + (ROW_HEIGHT - BAR_HEIGHT) / 2;
+  const isCritical = showCritical && task.isCritical;
+  const catColor = !showCritical && task.category ? categoryColors[task.category.trim()] : null;
+  const barColor = isCritical ? 'var(--color-critical-path)' : (catColor || 'var(--color-accent)');
+  const progressWidth = width * Math.min((task.progress || 0) / 100, 1);
+  const slackWidth = showSlack && task.totalFloat > 0 ? task.totalFloat * unitWidth : 0;
+  const resizeWidth = 6;
+
+  // Move whole bar: both start and end shift by the same delta
+  const handleMoveStart = (e) => {
+    e.stopPropagation();
+    if (onSelect) onSelect(String(task.id));
+    if (!onUpdateTaskFields) return;
+    const startX = e.clientX;
+    const origStart = task.startDate;
+    const origEnd = task.endDate;
+
+    const onMove = (ev) => {
+      const deltaDays = Math.round((ev.clientX - startX) / unitWidth);
+      if (deltaDays === 0) return;
+      onUpdateTaskFields(task.id, {
+        startDate: addDaysIso(origStart, deltaDays),
+        endDate: addDaysIso(origEnd, deltaDays),
+      });
+    };
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  };
+
+  // Resize right edge: end date moves, start date fixed
+  const handleResizeEndStart = (e) => {
+    e.stopPropagation();
+    if (onSelect) onSelect(String(task.id));
+    if (!onUpdateTaskFields) return;
+    const startX = e.clientX;
+    const origEnd = task.endDate;
+
+    const onMove = (ev) => {
+      const deltaDays = Math.round((ev.clientX - startX) / unitWidth);
+      if (deltaDays === 0) return;
+      const newEnd = addDaysIso(origEnd, deltaDays);
+      if (newEnd >= task.startDate) {
+        onUpdateTaskFields(task.id, { endDate: newEnd });
+      }
+    };
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  };
+
+  // Resize left edge: start date moves, end date fixed
+  const handleResizeStartStart = (e) => {
+    e.stopPropagation();
+    if (onSelect) onSelect(String(task.id));
+    if (!onUpdateTaskFields) return;
+    const startX = e.clientX;
+    const origStart = task.startDate;
+
+    const onMove = (ev) => {
+      const deltaDays = Math.round((ev.clientX - startX) / unitWidth);
+      if (deltaDays === 0) return;
+      const newStart = addDaysIso(origStart, deltaDays);
+      if (newStart <= task.endDate) {
+        onUpdateTaskFields(task.id, { startDate: newStart });
+      }
+    };
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  };
+
+  // Middle drag area shrinks when bar is too narrow to fit both handles
+  const handleZone = Math.min(resizeWidth, width / 3);
+  const middleX = x + handleZone;
+  const middleWidth = Math.max(width - handleZone * 2, 2);
+
+  return (
+    <g>
+      {/* Row highlight */}
+      {selected && (
+        <rect x={0} y={y} width={9999} height={ROW_HEIGHT} fill={barColor} opacity={0.06} />
+      )}
+      {slackWidth > 0 && <rect x={x + width} y={barY + 5} width={Math.min(slackWidth, 200)} height={6} rx={2} fill="var(--color-warning)" opacity={0.2} />}
+      {/* Background bar */}
+      <rect x={x} y={barY} width={width} height={BAR_HEIGHT} rx={3} fill={barColor} opacity={0.25} />
+      {/* Progress fill */}
+      {progressWidth > 0 && <rect x={x} y={barY} width={progressWidth} height={BAR_HEIGHT} rx={3} fill={barColor} opacity={0.85} />}
+      {/* Selection outline (on top of bar, below handles) */}
+      {selected && (
+        <rect x={x - 2} y={barY - 2} width={width + 4} height={BAR_HEIGHT + 4}
+          rx={4} fill="none" stroke={barColor} strokeWidth={2} opacity={0.8} />
+      )}
+      {/* Left resize handle -- visible grip line */}
+      <rect x={x} y={barY + 3} width={2} height={BAR_HEIGHT - 6} rx={1} fill={barColor} opacity={selected ? 0.9 : 0.5} />
+      {/* Right resize handle -- visible grip line */}
+      <rect x={x + width - 2} y={barY + 3} width={2} height={BAR_HEIGHT - 6} rx={1} fill={barColor} opacity={selected ? 0.9 : 0.5} />
+      {/* Left resize hit area */}
+      <rect x={x} y={barY} width={handleZone} height={BAR_HEIGHT} fill="transparent" style={{ cursor: 'w-resize' }} onMouseDown={handleResizeStartStart} />
+      {/* Middle drag-to-move hit area */}
+      <rect x={middleX} y={barY} width={middleWidth} height={BAR_HEIGHT} fill="transparent" style={{ cursor: 'grab' }} onMouseDown={handleMoveStart} />
+      {/* Right resize hit area */}
+      <rect x={x + width - handleZone} y={barY} width={handleZone} height={BAR_HEIGHT} fill="transparent" style={{ cursor: 'e-resize' }} onMouseDown={handleResizeEndStart} />
+      <text x={x + width + 4} y={barY + BAR_HEIGHT / 2 + 3.5} fill="var(--color-text-secondary)" fontSize={9} fontWeight={500}>{task.name}</text>
+    </g>
+  );
+}
+
+function MilestoneDiamond({ task, y, minDate, unitWidth, showCritical, onUpdateTaskFields, selected, onSelect, categoryColors = {} }) {
+  if (!task.startDate) return null;
+  const offset = daysBetween(minDate, task.startDate);
+  const cx = offset * unitWidth + unitWidth / 2;
+  const cy = y + ROW_HEIGHT / 2;
+  const size = 7;
+  const isCritical = showCritical && task.isCritical;
+  const catColor = !showCritical && task.category ? categoryColors[task.category.trim()] : null;
+  const color = isCritical ? 'var(--color-critical-path)' : (catColor || 'var(--color-warning)');
+
+  const handleMoveStart = (e) => {
+    e.stopPropagation();
+    if (onSelect) onSelect(String(task.id));
+    if (!onUpdateTaskFields) return;
+    const startX = e.clientX;
+    const origStart = task.startDate;
+
+    const onMove = (ev) => {
+      const deltaDays = Math.round((ev.clientX - startX) / unitWidth);
+      if (deltaDays === 0) return;
+      onUpdateTaskFields(task.id, { startDate: addDaysIso(origStart, deltaDays) });
+    };
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  };
+
+  return (
+    <g style={{ cursor: 'grab' }} onMouseDown={handleMoveStart}>
+      {selected && <rect x={0} y={y} width={9999} height={ROW_HEIGHT} fill={color} opacity={0.06} />}
+      {selected && <circle cx={cx} cy={cy} r={size + 3} fill="none" stroke={color} strokeWidth={2} opacity={0.7} />}
+      <polygon points={`${cx},${cy - size} ${cx + size},${cy} ${cx},${cy + size} ${cx - size},${cy}`} fill={color} opacity={0.9} />
+      <rect x={cx - size} y={cy - size} width={size * 2} height={size * 2} fill="transparent" />
+      <text x={cx + size + 4} y={cy + 3.5} fill="var(--color-text-secondary)" fontSize={9} fontWeight={500}>{task.name}</text>
+    </g>
+  );
+}
+
+function SummaryBar({ task, y, minDate, unitWidth }) {
+  if (!task.startDate || !task.endDate) return null;
+  const startOffset = daysBetween(minDate, task.startDate);
+  const duration = daysBetween(task.startDate, task.endDate) + 1;
+  const x = startOffset * unitWidth;
+  const width = Math.max(duration * unitWidth - 2, 4);
+  const barY = y + (ROW_HEIGHT - SUMMARY_HEIGHT) / 2;
+  const capWidth = 3;
+  return (
+    <g>
+      <rect x={x} y={barY} width={width} height={SUMMARY_HEIGHT} fill="var(--color-text-muted)" opacity={0.5} />
+      <rect x={x} y={barY} width={capWidth} height={SUMMARY_HEIGHT + 4} fill="var(--color-text-muted)" opacity={0.7} />
+      <rect x={x + width - capWidth} y={barY} width={capWidth} height={SUMMARY_HEIGHT + 4} fill="var(--color-text-muted)" opacity={0.7} />
+      <text x={x + width + 4} y={barY + SUMMARY_HEIGHT / 2 + 3.5} fill="var(--color-text-muted)" fontSize={9} fontWeight={600}>{task.name}</text>
+    </g>
+  );
+}
+
+function BaselineBar({ task, y, minDate, unitWidth }) {
+  const startOffset = daysBetween(minDate, task.baselineStart);
+  const duration = daysBetween(task.baselineStart, task.baselineEnd) + 1;
+  const x = startOffset * unitWidth;
+  const width = Math.max(duration * unitWidth - 2, 4);
+  const barY = y + ROW_HEIGHT / 2 + BAR_HEIGHT / 2 + 1;
+  return <rect x={x} y={barY} width={width} height={BASELINE_HEIGHT} rx={1} fill="var(--color-text-muted)" opacity={0.3} />;
+}
+
+function DependencyArrow({ dep, tasks, taskIndex, minDate, unitWidth }) {
+  const fromIdx = taskIndex.get(dep.from);
+  const toIdx = taskIndex.get(dep.to);
+  if (fromIdx == null || toIdx == null) return null;
+  const fromTask = tasks[fromIdx];
+  const toTask = tasks[toIdx];
+  if (!fromTask.endDate || !toTask.startDate) return null;
+  const fromEndDay = daysBetween(minDate, fromTask.endDate) + 1;
+  const toStartDay = daysBetween(minDate, toTask.startDate);
+  const x1 = fromEndDay * unitWidth;
+  const y1 = fromIdx * ROW_HEIGHT + ROW_HEIGHT / 2;
+  const x2 = toStartDay * unitWidth;
+  const y2 = toIdx * ROW_HEIGHT + ROW_HEIGHT / 2;
+  const midX = x1 + 8;
+  return <path d={`M${x1},${y1} L${midX},${y1} L${midX},${y2} L${x2},${y2}`} fill="none" stroke="var(--color-text-muted)" strokeWidth={1} opacity={0.5} markerEnd="url(#arrowhead)" />;
+}
+
+function TodayLine({ minDate, unitWidth, chartHeight }) {
+  const today = todayIso();
+  const offset = daysBetween(minDate, today);
+  if (offset < 0) return null;
+  const x = offset * unitWidth + unitWidth / 2;
+  return <line x1={x} y1={0} x2={x} y2={chartHeight} stroke="var(--color-danger)" strokeWidth={1.5} strokeDasharray="4 3" opacity={0.7} />;
+}
+
+// Parse "YYYY-MM-DD" as local time (noon) to avoid timezone day-shift.
+function parseLocal(iso) {
+  const [y, m, d] = iso.split('-').map(Number);
+  return new Date(y, m - 1, d, 12);
+}
+
+function toLocalIso(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function todayIso() {
+  return toLocalIso(new Date());
+}
+
+function addDaysIso(isoDate, days) {
+  const d = parseLocal(isoDate);
+  d.setDate(d.getDate() + days);
+  return toLocalIso(d);
+}
+
+function getMinDate(tasks) {
+  let min = null;
+  for (const t of tasks) {
+    if (t.startDate && (!min || t.startDate < min)) min = t.startDate;
+    if (t.baselineStart && (!min || t.baselineStart < min)) min = t.baselineStart;
+  }
+  return min || todayIso();
+}
+
+function getMaxDate(tasks) {
+  let max = null;
+  for (const t of tasks) {
+    if (t.endDate && (!max || t.endDate > max)) max = t.endDate;
+    if (t.baselineEnd && (!max || t.baselineEnd > max)) max = t.baselineEnd;
+  }
+  return max || todayIso();
+}
+
+function daysBetween(a, b) {
+  return Math.round((parseLocal(b) - parseLocal(a)) / (1000 * 60 * 60 * 24));
+}

@@ -1,0 +1,23 @@
+---
+description: How to navigate and use the GanttGen Obsidian vault for project context
+alwaysApply: true
+---
+
+# Obsidian Vault Workflow
+
+## Vault layout
+
+| Folder | Purpose |
+|---|---|
+| `obsidian/00-project/` | Stable project facts: brief, architecture, tech stack |
+| `obsidian/01-planning/` | Roadmap and prioritized backlog |
+| `obsidian/02-dev-logs/` | Daily session logs (one file per day, named `YYYY-MM-DD.md`) |
+| `obsidian/03-decisions/` | Architecture Decision Records (ADRs) |
+| `obsidian/04-references/` | External links, research, and reference material |
+
+## Rules
+
+- At the start of every session, read the most recent file in `obsidian/02-dev-logs/` to understand recent progress and open issues.
+- Before proposing any architectural or structural change, read `obsidian/03-decisions/` to check for existing decisions that may apply.
+- When the user asks about the project goal or scope, read `obsidian/00-project/project-brief.md` first.
+- When the user asks about system design or components, read `obsidian/00-project/architecture.md` first.
