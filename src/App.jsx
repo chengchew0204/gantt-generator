@@ -55,8 +55,8 @@ const DEFAULT_VISIBLE = new Set([
 ]);
 
 const DEFAULT_VIEW_OPTIONS = {
-  showCriticalPath: true,
-  showSlack: true,
+  showCriticalPath: false,
+  showSlack: false,
   showDependencies: true,
   showTodayLine: true,
   showBaseline: true,
@@ -143,6 +143,7 @@ export default function App() {
   const [selectedTaskId, setSelectedTaskId] = useState(null);
   const [categoryColors, setCategoryColors] = useState({});
   const [projectName, setProjectName] = useState('');
+  const [datePickField, setDatePickField] = useState(null);
   const containerRef = useRef(null);
   const chartRef = useRef(null);
   const viewBtnRef = useRef(null);
@@ -244,6 +245,15 @@ export default function App() {
 
   const handleDeleteTask = useCallback((taskId) => {
     setTasks((prev) => prev.filter((t) => String(t.id) !== String(taskId)));
+  }, []);
+
+  const handleReorderTask = useCallback((fromIndex, toIndex) => {
+    setTasks((prev) => {
+      const next = [...prev];
+      const [moved] = next.splice(fromIndex, 1);
+      next.splice(toIndex, 0, moved);
+      return next;
+    });
   }, []);
 
   const handleToggleCollapse = useCallback((parentId) => {
@@ -472,11 +482,14 @@ export default function App() {
             onUpdateTask={handleUpdateTask}
             onAddTask={handleAddTask}
             onDeleteTask={handleDeleteTask}
+            onReorderTask={handleReorderTask}
             scrollTop={syncScrollTop}
             onScroll={setSyncScrollTop}
             selectedTaskId={selectedTaskId}
             onSelectTask={setSelectedTaskId}
             headerHeight={effectiveHeaderHeight}
+            datePickField={datePickField}
+            onDatePickField={setDatePickField}
           />
         </div>
 
@@ -500,6 +513,8 @@ export default function App() {
             selectedTaskId={selectedTaskId}
             onSelectTask={setSelectedTaskId}
             categoryColors={categoryColors}
+            datePickField={datePickField}
+            onDatePickField={setDatePickField}
           />
         </div>
       </div>

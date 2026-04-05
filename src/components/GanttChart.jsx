@@ -20,11 +20,12 @@ function toBool(v) {
   return v !== 'false' && v !== false;
 }
 
-export default function GanttChart({ tasks, allTasks, viewOptions = {}, scrollTop, onScroll, onUpdateTask, onUpdateTaskFields, selectedTaskId, onSelectTask, categoryColors = {} }) {
+export default function GanttChart({ tasks, allTasks, viewOptions = {}, scrollTop, onScroll, onUpdateTask, onUpdateTaskFields, selectedTaskId, onSelectTask, categoryColors = {}, datePickField, onDatePickField }) {
   const [scale, setScale] = useState('day');
   const [zoomPct, setZoomPct] = useState(ZOOM_DEFAULT);
   const [zoomInput, setZoomInput] = useState(String(ZOOM_DEFAULT));
   const [hScrollLeft, setHScrollLeft] = useState(0);
+  const [hoveredDate, setHoveredDate] = useState(null);
   const scrollRef = useRef(null);
   const suppressScroll = useRef(false);
 
@@ -84,6 +85,43 @@ export default function GanttChart({ tasks, allTasks, viewOptions = {}, scrollTo
     const max = getMaxDate(src);
     return { minDate: min, totalDays: daysBetween(min, max) + 1 };
   }, [tasks, allTasks]);
+
+  const isPicking = !!datePickField && !!selectedTaskId;
+
+  const xToDate = useCallback((clientX, svgEl) => {
+    if (!svgEl) return null;
+    const rect = svgEl.getBoundingClientRect();
+    const x = clientX - rect.left;
+    const dayOffset = Math.floor(x / unitWidth);
+    return addDaysIso(minDate, dayOffset);
+  }, [unitWidth, minDate]);
+
+  const handleGridDateClick = useCallback((e) => {
+    if (!isPicking || !onUpdateTask || !selectedTaskId) {
+      if (onSelectTask) onSelectTask(null);
+      return;
+    }
+    const date = xToDate(e.clientX, e.currentTarget);
+    if (!date) return;
+    onUpdateTask(selectedTaskId, datePickField, date);
+    if (onDatePickField) onDatePickField(null);
+  }, [isPicking, selectedTaskId, datePickField, xToDate, onUpdateTask, onSelectTask, onDatePickField]);
+
+  const handleGridMouseMove = useCallback((e) => {
+    if (!isPicking) { setHoveredDate(null); return; }
+    const date = xToDate(e.clientX, e.currentTarget);
+    setHoveredDate(date);
+  }, [isPicking, xToDate]);
+
+  const handleGridMouseLeave = useCallback(() => {
+    setHoveredDate(null);
+  }, []);
+
+  const hoveredDateLabel = useMemo(() => {
+    if (!hoveredDate || !datePickField) return null;
+    const label = datePickField === 'startDate' ? 'Start' : 'End';
+    return `${label}: ${hoveredDate}`;
+  }, [hoveredDate, datePickField]);
 
   const taskIndex = useMemo(() => {
     const map = new Map();
@@ -204,17 +242,28 @@ export default function GanttChart({ tasks, allTasks, viewOptions = {}, scrollTo
             width={Math.max(chartWidth, dataWidth)}
             height={timelineH}
             className="block"
-            style={{ transform: `translateX(${-hScrollLeft}px)` }}
+            style={{ transform: `translateX(${-hScrollLeft}px)`, cursor: isPicking ? 'crosshair' : 'default' }}
+            onClick={handleGridDateClick}
+            onMouseMove={handleGridMouseMove}
+            onMouseLeave={handleGridMouseLeave}
           >
             <TimelineHeader minDate={minDate} totalDays={totalDays} unitWidth={unitWidth} scale={scale} headerHeight={timelineH} chartWidth={chartWidth} showMonthLabels={show.monthLabels} showDayLabels={show.dayLabels} />
+            {isPicking && hoveredDate && (
+              <HoverDateHighlight date={hoveredDate} minDate={minDate} unitWidth={unitWidth} height={timelineH} label={hoveredDateLabel} />
+            )}
           </svg>
         </div>
       )}
 
       {/* Scrollable body with grid background + task bars */}
-      <div ref={scrollRef} className="flex-1 overflow-auto" onScroll={handleScroll}>
-        <svg width="100%" height={bodyHeight} className="block" style={{ minWidth: chartWidth }}
-          onMouseDown={() => { if (onSelectTask) onSelectTask(null); }}>
+      <div ref={scrollRef} className="flex-1 overflow-auto" onScroll={handleScroll}
+        onClick={(e) => { if (e.target === e.currentTarget && onSelectTask) onSelectTask(null); }}>
+        <svg width="100%" height={bodyHeight} className="block"
+          style={{ minWidth: chartWidth, cursor: isPicking ? 'crosshair' : 'default' }}
+          onClick={handleGridDateClick}
+          onMouseMove={handleGridMouseMove}
+          onMouseLeave={handleGridMouseLeave}
+        >
           <defs>
             <marker id="arrowhead" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto">
               <path d="M0,0 L6,2.5 L0,5 Z" fill="var(--color-text-muted)" opacity="0.6" />
@@ -222,6 +271,9 @@ export default function GanttChart({ tasks, allTasks, viewOptions = {}, scrollTo
           </defs>
 
           <BodyGrid minDate={minDate} totalDays={totalDays} unitWidth={unitWidth} bodyHeight={bodyHeight} chartWidth={chartWidth} scale={scale} />
+          {isPicking && hoveredDate && (
+            <HoverDateHighlight date={hoveredDate} minDate={minDate} unitWidth={unitWidth} height={bodyHeight} />
+          )}
 
           {tasks.map((task, i) => {
             const y = i * ROW_HEIGHT;
@@ -249,6 +301,11 @@ export default function GanttChart({ tasks, allTasks, viewOptions = {}, scrollTo
           ))}
 
           {show.todayLine && <TodayLine minDate={minDate} unitWidth={unitWidth} chartHeight={bodyHeight} />}
+
+          {isPicking && (
+            <rect x={0} y={0} width={chartWidth} height={bodyHeight}
+              fill="transparent" style={{ cursor: 'crosshair' }} />
+          )}
         </svg>
       </div>
     </div>
@@ -428,6 +485,30 @@ function BodyGrid({ minDate, totalDays, unitWidth, bodyHeight, chartWidth, scale
   return <g>{lines}</g>;
 }
 
+function HoverDateHighlight({ date, minDate, unitWidth, height, label }) {
+  if (!date) return null;
+  const offset = daysBetween(minDate, date);
+  const x = offset * unitWidth;
+  return (
+    <g style={{ pointerEvents: 'none' }}>
+      <rect
+        x={x} y={0} width={unitWidth} height={height}
+        fill="var(--color-accent)" opacity={0.10}
+      />
+      {label && (
+        <>
+          <rect x={x + unitWidth / 2 - 40} y={2} width={80} height={16} rx={3}
+            fill="var(--color-accent)" opacity={0.85} />
+          <text x={x + unitWidth / 2} y={13} textAnchor="middle"
+            fill="#fff" fontSize={9} fontWeight={500}>
+            {label}
+          </text>
+        </>
+      )}
+    </g>
+  );
+}
+
 function TaskBar({ task, y, minDate, unitWidth, showCritical, showSlack, onUpdateTaskFields, selected, onSelect, categoryColors = {} }) {
   if (!task.startDate || !task.endDate) return null;
   const startOffset = daysBetween(minDate, task.startDate);
@@ -515,13 +596,12 @@ function TaskBar({ task, y, minDate, unitWidth, showCritical, showSlack, onUpdat
     document.addEventListener('mouseup', onUp);
   };
 
-  // Middle drag area shrinks when bar is too narrow to fit both handles
   const handleZone = Math.min(resizeWidth, width / 3);
   const middleX = x + handleZone;
   const middleWidth = Math.max(width - handleZone * 2, 2);
 
   return (
-    <g>
+    <g onClick={(e) => e.stopPropagation()}>
       {/* Row highlight */}
       {selected && (
         <rect x={0} y={y} width={9999} height={ROW_HEIGHT} fill={barColor} opacity={0.06} />
@@ -582,7 +662,7 @@ function MilestoneDiamond({ task, y, minDate, unitWidth, showCritical, onUpdateT
   };
 
   return (
-    <g style={{ cursor: 'grab' }} onMouseDown={handleMoveStart}>
+    <g style={{ cursor: 'grab' }} onMouseDown={handleMoveStart} onClick={(e) => e.stopPropagation()}>
       {selected && <rect x={0} y={y} width={9999} height={ROW_HEIGHT} fill={color} opacity={0.06} />}
       {selected && <circle cx={cx} cy={cy} r={size + 3} fill="none" stroke={color} strokeWidth={2} opacity={0.7} />}
       <polygon points={`${cx},${cy - size} ${cx + size},${cy} ${cx},${cy + size} ${cx - size},${cy}`} fill={color} opacity={0.9} />

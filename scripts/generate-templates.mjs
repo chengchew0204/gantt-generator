@@ -247,4 +247,68 @@ writeTemplate('08-baseline-variance.xlsx', [
   'Visible Columns': 'id,name,duration,startDate,endDate,progress,status,owner,remarks',
 });
 
+// ---------------------------------------------------------------------------
+// 9. Chiller & CW305 Construction -- construction project with WBS hierarchy
+//    Based on an 11-week schedule starting 2026-03-09 through 2026-05-22.
+// ---------------------------------------------------------------------------
+writeTemplate('09-chiller-cw305-construction.xlsx', [
+  // WBS 1.0 — Civil Works & Chiller Foundations (Week 1–2)
+  ['1.0', 'Civil Works & Chiller Foundations', '', 'Summary', '2026-03-09', '2026-03-20', 10, 0, 'Not Started', '', '', '', '', ''],
+  // (no sub-tasks listed — single summary bar spanning Weeks 1–2)
+
+  // WBS 2.0 — Structural Steel & Gantry Works (Weeks 3–8, 6 weeks)
+  ['2.0', 'Structural Steel & Gantry Works', '1.0', 'Summary', '2026-03-23', '2026-05-01', 30, 0, 'Not Started', '', '6 weeks', '', '', ''],
+  ['2.1', 'Purchase Steel Material', '1.0', 'Procurement', '2026-03-23', '2026-04-03', 10, 0, 'Not Started', '', '', '', '', '2.0'],
+  ['2.2', 'Reuse Steel Material (Remove rust & Painting)', '1.0', 'Construction', '2026-03-23', '2026-04-03', 10, 0, 'Not Started', '', '', '', '', '2.0'],
+  ['2.3', 'Outdoor Gantry Works', '2.1,2.2', 'Construction', '2026-04-06', '2026-05-01', 20, 0, 'Not Started', '', '', '', '', '2.0'],
+  ['2.4', 'Indoor Gantry Works', '2.1,2.2', 'Construction', '2026-04-06', '2026-05-01', 20, 0, 'Not Started', '', '', '', '', '2.0'],
+  ['2.5', 'POD Gantry Works', '2.1,2.2', 'Construction', '2026-04-06', '2026-04-17', 10, 0, 'Not Started', '', '', '', '', '2.0'],
+
+  // WBS 3.0 — POD Ceiling, Wall & Floor (Renovation) (Weeks 7–11, 5 weeks)
+  ['3.0', 'POD Ceiling, Wall & Floor (Renovation)', '2.0', 'Summary', '2026-04-20', '2026-05-22', 25, 0, 'Not Started', '', '5 weeks', '', '', ''],
+  ['3.1', 'ESD Tile', '3.0', 'Construction', '2026-04-27', '2026-05-08', 10, 0, 'Not Started', '', '', '', '', '3.0'],
+  ['3.2', 'Wall Frame (South & East side)', '3.0', 'Construction', '2026-04-20', '2026-05-01', 10, 0, 'Not Started', '', '', '', '', '3.0'],
+  ['3.3', 'Partition Walls (South side & East side)', '3.2', 'Construction', '2026-05-04', '2026-05-15', 10, 0, 'Not Started', '', '', '', '', '3.0'],
+  ['3.4', 'Wall Frame (North side)', '3.0', 'Construction', '2026-04-20', '2026-05-01', 10, 0, 'Not Started', '', '', '', '', '3.0'],
+  ['3.5', 'Partition Walls (North side)', '3.4', 'Construction', '2026-05-04', '2026-05-15', 10, 0, 'Not Started', '', '', '', '', '3.0'],
+  ['3.6', 'Ceiling (incl. Lighting)', '3.2,3.4', 'Construction', '2026-05-04', '2026-05-22', 15, 0, 'Not Started', '', '', '', '', '3.0'],
+
+  // WBS 4.0 — Equipment Installation (Chiller & CW305) (Weeks 5–9, 5 weeks)
+  ['4.0', 'Equipment Installation (Chiller & CW305)', '1.0', 'Summary', '2026-04-06', '2026-05-08', 25, 0, 'Not Started', '', '5 weeks', '', '', ''],
+  ['4.1', 'Chiller Installation', '1.0', 'Installation', '2026-04-06', '2026-04-24', 15, 0, 'Not Started', '', '', '', '', '4.0'],
+  ['4.2', 'CW305 Installation', '1.0', 'Installation', '2026-04-06', '2026-04-24', 15, 0, 'Not Started', '', '', '', '', '4.0'],
+  ['4.3', 'Pumps Installation', '4.1,4.2', 'Installation', '2026-04-27', '2026-05-08', 10, 0, 'Not Started', '', '', '', '', '4.0'],
+  ['4.4', 'Fence Installation', '4.1,4.2', 'Installation', '2026-04-27', '2026-05-01', 5, 0, 'Not Started', '', '', '', '', '4.0'],
+
+  // WBS 5.0 — MEP - Chilled Water Piping Installation (Weeks 6–9, 4 weeks)
+  ['5.0', 'MEP - Chilled Water Piping Installation', '4.0', 'Summary', '2026-04-13', '2026-05-08', 20, 0, 'Not Started', '', '4 weeks', '', '', ''],
+  ['5.1', 'Piping', '4.1', 'MEP', '2026-04-13', '2026-04-24', 10, 0, 'Not Started', '', '', '', '', '5.0'],
+  ['5.2', 'Pneumatic testing', '5.1', 'MEP', '2026-04-27', '2026-05-01', 5, 0, 'Not Started', '', '', '', '', '5.0'],
+  ['5.3', 'Pipe Flushing', '5.2', 'MEP', '2026-05-04', '2026-05-08', 5, 0, 'Not Started', '', '', '', '', '5.0'],
+  ['5.4', 'Pipe Insulation', '5.1', 'MEP', '2026-04-27', '2026-05-08', 10, 0, 'Not Started', '', '', '', '', '5.0'],
+
+  // WBS 6.0 — MEP - Electrical Power Installation (Weeks 6–8, 3 weeks)
+  ['6.0', 'MEP - Electrical Power Installation', '1.0', 'Summary', '2026-04-13', '2026-05-01', 15, 0, 'Not Started', '', '3 weeks', '', '', ''],
+  ['6.1', 'Switch Panel', '1.0', 'MEP', '2026-04-13', '2026-04-24', 10, 0, 'Not Started', '', '', '', '', '6.0'],
+  ['6.2', 'Cable Tray Installation', '6.1', 'MEP', '2026-04-20', '2026-05-01', 10, 0, 'Not Started', '', '', '', '', '6.0'],
+  ['6.3', 'Cabling and Termination', '6.1', 'MEP', '2026-04-27', '2026-05-08', 10, 0, 'Not Started', '', '', '', '', '6.0'],
+
+  // WBS 7.0 — Fire Protection System Installation (Weeks 4–9, 6 weeks)
+  ['7.0', 'Fire Protection System Installation', '1.0', 'Summary', '2026-03-30', '2026-05-08', 30, 0, 'Not Started', '', '6 weeks', '', '', ''],
+  ['7.1', 'Design and Permit', '1.0', 'Planning', '2026-03-30', '2026-04-17', 15, 0, 'Not Started', '', '', '', '', '7.0'],
+  ['7.2', 'System Installation', '7.1', 'Installation', '2026-04-20', '2026-05-08', 15, 0, 'Not Started', '', '', '', '', '7.0'],
+
+  // WBS 8.0 — Inspection, Testing & Cleaning (Week 10)
+  ['8.0', 'Inspection, Testing & Cleaning', '3.0,4.0,5.0,6.0,7.0', 'QA', '2026-05-11', '2026-05-15', 5, 0, 'Not Started', '', '', '', '', ''],
+
+  // WBS 9.0 — Commissioning and Hand over (Week 11)
+  ['9.0', 'Commissioning and Hang over', '8.0', 'Delivery', '2026-05-18', '2026-05-22', 5, 0, 'Not Started', '', '', '', '', ''],
+], {
+  'Show Critical Path': 'true',
+  'Show Dependencies': 'true',
+  'Show Slack': 'true',
+  'Skip Weekends': 'true',
+  'Visible Columns': 'id,name,category,duration,startDate,endDate,status,remarks',
+});
+
 console.log('\nAll templates generated in excel-template/');

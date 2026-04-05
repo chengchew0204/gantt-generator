@@ -6,6 +6,7 @@ import {
   ChevronRight,
   ChevronDown,
   Columns3,
+  GripVertical,
 } from 'lucide-react';
 
 const ROW_HEIGHT = 32;
@@ -53,16 +54,23 @@ export default function DataTable({
   onUpdateTask,
   onAddTask,
   onDeleteTask,
+  onReorderTask,
   scrollTop,
   onScroll,
   selectedTaskId,
   onSelectTask,
   headerHeight: headerHeightProp,
+  datePickField,
+  onDatePickField,
 }) {
   const headerH = headerHeightProp || HEADER_HEIGHT;
   const [showColumnPicker, setShowColumnPicker] = useState(false);
   const [hScrollLeft, setHScrollLeft] = useState(0);
   const [colWidths, setColWidths] = useState(DEFAULT_COL_WIDTHS);
+  const [dragIndex, setDragIndex] = useState(null);
+  const [dropIndex, setDropIndex] = useState(null);
+  const dragRef = useRef(null);
+  const dropRef = useRef(null);
   const pickerRef = useRef(null);
   const scrollRef = useRef(null);
   const suppressScroll = useRef(false);
@@ -116,6 +124,48 @@ export default function DataTable({
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
   }, []);
+
+  const handleDragStart = useCallback((index, e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragIndex(index);
+    setDropIndex(index);
+    dragRef.current = index;
+    dropRef.current = index;
+
+    const len = tasks.length;
+
+    const onMove = (ev) => {
+      if (!scrollRef.current) return;
+      const rect = scrollRef.current.getBoundingClientRect();
+      const y = ev.clientY - rect.top + scrollRef.current.scrollTop;
+      const newDrop = Math.max(0, Math.min(len, Math.round(y / ROW_HEIGHT)));
+      dropRef.current = newDrop;
+      setDropIndex(newDrop);
+    };
+
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      const from = dragRef.current;
+      const drop = dropRef.current;
+      if (from != null && drop != null && from !== drop && onReorderTask) {
+        const to = drop > from ? drop - 1 : drop;
+        if (to !== from) onReorderTask(from, to);
+      }
+      dragRef.current = null;
+      dropRef.current = null;
+      setDragIndex(null);
+      setDropIndex(null);
+    };
+
+    document.body.style.cursor = 'grabbing';
+    document.body.style.userSelect = 'none';
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }, [tasks.length, onReorderTask]);
 
   const cols = columns.filter((c) => visibleColumns.has(c.key));
 
@@ -185,12 +235,15 @@ export default function DataTable({
       </div>
 
       {/* Body */}
-      <div ref={scrollRef} className="flex-1 overflow-auto" onScroll={handleScroll}>
-        <div style={{ minWidth: totalMinWidth }}>
-          {tasks.map((task) => (
+      <div ref={scrollRef} className="flex-1 overflow-auto" onScroll={handleScroll}
+        onClick={(e) => { if (e.target === e.currentTarget && onSelectTask) onSelectTask(null); }}>
+        <div style={{ minWidth: totalMinWidth, position: 'relative' }}
+          onClick={(e) => { if (e.target === e.currentTarget && onSelectTask) onSelectTask(null); }}>
+          {tasks.map((task, i) => (
             <TaskRow
               key={task.id}
               task={task}
+              index={i}
               cols={cols}
               colWidths={colWidths}
               isParent={!!task.isParent}
@@ -201,8 +254,24 @@ export default function DataTable({
               onDeleteTask={onDeleteTask}
               selected={String(task.id) === String(selectedTaskId)}
               onSelect={onSelectTask}
+              datePickField={datePickField}
+              onDatePickField={onDatePickField}
+              onDragStart={handleDragStart}
+              isDragging={dragIndex === i}
             />
           ))}
+          {dragIndex != null && dropIndex != null && dropIndex !== dragIndex && dropIndex !== dragIndex + 1 && (
+            <div style={{
+              position: 'absolute',
+              left: 0,
+              right: 0,
+              top: dropIndex * ROW_HEIGHT - 1,
+              height: 2,
+              backgroundColor: 'var(--color-accent)',
+              zIndex: 20,
+              pointerEvents: 'none',
+            }} />
+          )}
         </div>
       </div>
       <AddRowBar onAddTask={onAddTask} />
@@ -234,6 +303,7 @@ function ResizableHeaderCell({ col, width, onResizeStart }) {
 
 function TaskRow({
   task,
+  index,
   cols,
   colWidths,
   isParent,
@@ -244,6 +314,10 @@ function TaskRow({
   onDeleteTask,
   selected,
   onSelect,
+  datePickField,
+  onDatePickField,
+  onDragStart,
+  isDragging,
 }) {
   const [hovering, setHovering] = useState(false);
 
@@ -263,6 +337,7 @@ function TaskRow({
         borderBottom: '1px solid var(--color-border-subtle)',
         backgroundColor: bgColor,
         borderLeft: selected ? '2px solid var(--color-accent)' : '2px solid transparent',
+        opacity: isDragging ? 0.4 : 1,
       }}
       onMouseEnter={() => setHovering(true)}
       onMouseLeave={() => setHovering(false)}
@@ -271,12 +346,20 @@ function TaskRow({
       <div className="w-6 flex-shrink-0 px-1 flex items-center justify-center">
         {isParent ? (
           <button
-            onClick={() => onToggleCollapse(String(task.id))}
+            onClick={(e) => { e.stopPropagation(); onToggleCollapse(String(task.id)); }}
             className="p-0.5 cursor-pointer rounded transition-colors"
             style={{ color: 'var(--color-text-muted)' }}
           >
             {isCollapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
           </button>
+        ) : hovering ? (
+          <div
+            onMouseDown={(e) => onDragStart(index, e)}
+            style={{ cursor: 'grab', color: 'var(--color-text-muted)' }}
+            className="p-0.5"
+          >
+            <GripVertical size={12} />
+          </div>
         ) : hasParent ? (
           <span className="text-[10px]" style={{ color: 'var(--color-border)' }}>&mdash;</span>
         ) : null}
@@ -285,7 +368,7 @@ function TaskRow({
         const w = getColW(colWidths, col.key);
         return (
           <div key={col.key} className="flex-shrink-0 overflow-hidden" style={{ width: w, maxWidth: w }}>
-            <EditableCell task={task} col={col} isParent={isParent} onUpdateTask={onUpdateTask} />
+            <EditableCell task={task} col={col} isParent={isParent} onUpdateTask={onUpdateTask} selected={selected} datePickField={datePickField} onDatePickField={onDatePickField} />
           </div>
         );
       })}
@@ -306,11 +389,12 @@ function TaskRow({
   );
 }
 
-function EditableCell({ task, col, isParent, onUpdateTask }) {
+function EditableCell({ task, col, isParent, onUpdateTask, selected, datePickField, onDatePickField }) {
   const [editing, setEditing] = useState(false);
   const inputRef = useRef(null);
 
   const value = task[col.key];
+  const isDateCol = col.type === 'date' && (col.key === 'startDate' || col.key === 'endDate');
 
   useEffect(() => {
     if (editing && inputRef.current) {
@@ -319,14 +403,27 @@ function EditableCell({ task, col, isParent, onUpdateTask }) {
     }
   }, [editing]);
 
-  const commit = (newVal) => {
+  const commit = (newVal, clearPick) => {
     setEditing(false);
+    if (clearPick && onDatePickField && isDateCol) onDatePickField(null);
     if (col.type === 'number') {
       const n = parseFloat(newVal);
       onUpdateTask(task.id, col.key, Number.isFinite(n) ? n : 0);
     } else {
       onUpdateTask(task.id, col.key, newVal);
     }
+  };
+
+  const startEditing = () => {
+    setEditing(true);
+    if (isDateCol && onDatePickField) {
+      onDatePickField(col.key);
+    }
+  };
+
+  const cancelEditing = () => {
+    setEditing(false);
+    if (isDateCol && onDatePickField) onDatePickField(null);
   };
 
   if (col.key === 'id') {
@@ -351,7 +448,7 @@ function EditableCell({ task, col, isParent, onUpdateTask }) {
   if (!editing) {
     return (
       <button
-        onClick={() => setEditing(true)}
+        onClick={startEditing}
         className="block w-full text-left px-2 text-xs cursor-text truncate"
         style={{
           color: value ? 'var(--color-text-primary)' : 'var(--color-text-muted)',
@@ -376,10 +473,10 @@ function EditableCell({ task, col, isParent, onUpdateTask }) {
         ref={inputRef}
         type="date"
         defaultValue={value || ''}
-        onBlur={(e) => commit(e.target.value || null)}
+        onBlur={(e) => commit(e.target.value || null, false)}
         onKeyDown={(e) => {
-          if (e.key === 'Enter') commit(e.target.value || null);
-          if (e.key === 'Escape') setEditing(false);
+          if (e.key === 'Enter') commit(e.target.value || null, true);
+          if (e.key === 'Escape') cancelEditing();
         }}
         className="w-full px-2 text-xs outline-none"
         style={{
