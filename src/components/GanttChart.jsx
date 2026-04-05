@@ -20,7 +20,7 @@ function toBool(v) {
   return v !== 'false' && v !== false;
 }
 
-export default function GanttChart({ tasks, allTasks, viewOptions = {}, scrollTop, onScroll, onUpdateTask, onUpdateTaskFields, selectedTaskId, onSelectTask, categoryColors = {}, datePickField, onDatePickField }) {
+export default function GanttChart({ tasks, allTasks, viewOptions = {}, scrollTop, onScroll, onUpdateTask, onUpdateTaskFields, selectedTaskId, onSelectTask, categoryColors = {}, datePickField, onDatePickField, onBeginDrag, onEndDrag }) {
   const [scale, setScale] = useState('day');
   const [zoomPct, setZoomPct] = useState(ZOOM_DEFAULT);
   const [zoomInput, setZoomInput] = useState(String(ZOOM_DEFAULT));
@@ -288,9 +288,9 @@ export default function GanttChart({ tasks, allTasks, viewOptions = {}, scrollTo
                 {task.isParent ? (
                   <SummaryBar task={task} y={y} minDate={minDate} unitWidth={unitWidth} />
                 ) : task.duration === 0 ? (
-                  <MilestoneDiamond task={task} y={y} minDate={minDate} unitWidth={unitWidth} showCritical={show.criticalPath} onUpdateTaskFields={onUpdateTaskFields} selected={String(task.id) === String(selectedTaskId)} onSelect={onSelectTask} categoryColors={categoryColors} />
+                  <MilestoneDiamond task={task} y={y} minDate={minDate} unitWidth={unitWidth} showCritical={show.criticalPath} onUpdateTaskFields={onUpdateTaskFields} selected={String(task.id) === String(selectedTaskId)} onSelect={onSelectTask} categoryColors={categoryColors} onBeginDrag={onBeginDrag} onEndDrag={onEndDrag} />
                 ) : (
-                  <TaskBar task={task} y={y} minDate={minDate} unitWidth={unitWidth} showCritical={show.criticalPath} showSlack={show.slack} onUpdateTaskFields={onUpdateTaskFields} selected={String(task.id) === String(selectedTaskId)} onSelect={onSelectTask} categoryColors={categoryColors} />
+                  <TaskBar task={task} y={y} minDate={minDate} unitWidth={unitWidth} showCritical={show.criticalPath} showSlack={show.slack} onUpdateTaskFields={onUpdateTaskFields} selected={String(task.id) === String(selectedTaskId)} onSelect={onSelectTask} categoryColors={categoryColors} onBeginDrag={onBeginDrag} onEndDrag={onEndDrag} />
                 )}
               </g>
             );
@@ -509,7 +509,7 @@ function HoverDateHighlight({ date, minDate, unitWidth, height, label }) {
   );
 }
 
-function TaskBar({ task, y, minDate, unitWidth, showCritical, showSlack, onUpdateTaskFields, selected, onSelect, categoryColors = {} }) {
+function TaskBar({ task, y, minDate, unitWidth, showCritical, showSlack, onUpdateTaskFields, selected, onSelect, categoryColors = {}, onBeginDrag, onEndDrag }) {
   if (!task.startDate || !task.endDate) return null;
   const startOffset = daysBetween(minDate, task.startDate);
   const duration = daysBetween(task.startDate, task.endDate) + 1;
@@ -523,11 +523,11 @@ function TaskBar({ task, y, minDate, unitWidth, showCritical, showSlack, onUpdat
   const slackWidth = showSlack && task.totalFloat > 0 ? task.totalFloat * unitWidth : 0;
   const resizeWidth = 6;
 
-  // Move whole bar: both start and end shift by the same delta
   const handleMoveStart = (e) => {
     e.stopPropagation();
     if (onSelect) onSelect(String(task.id));
     if (!onUpdateTaskFields) return;
+    if (onBeginDrag) onBeginDrag();
     const startX = e.clientX;
     const origStart = task.startDate;
     const origEnd = task.endDate;
@@ -543,16 +543,17 @@ function TaskBar({ task, y, minDate, unitWidth, showCritical, showSlack, onUpdat
     const onUp = () => {
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
+      if (onEndDrag) onEndDrag();
     };
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
   };
 
-  // Resize right edge: end date moves, start date fixed
   const handleResizeEndStart = (e) => {
     e.stopPropagation();
     if (onSelect) onSelect(String(task.id));
     if (!onUpdateTaskFields) return;
+    if (onBeginDrag) onBeginDrag();
     const startX = e.clientX;
     const origEnd = task.endDate;
 
@@ -567,16 +568,17 @@ function TaskBar({ task, y, minDate, unitWidth, showCritical, showSlack, onUpdat
     const onUp = () => {
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
+      if (onEndDrag) onEndDrag();
     };
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
   };
 
-  // Resize left edge: start date moves, end date fixed
   const handleResizeStartStart = (e) => {
     e.stopPropagation();
     if (onSelect) onSelect(String(task.id));
     if (!onUpdateTaskFields) return;
+    if (onBeginDrag) onBeginDrag();
     const startX = e.clientX;
     const origStart = task.startDate;
 
@@ -591,6 +593,7 @@ function TaskBar({ task, y, minDate, unitWidth, showCritical, showSlack, onUpdat
     const onUp = () => {
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
+      if (onEndDrag) onEndDrag();
     };
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
@@ -631,7 +634,7 @@ function TaskBar({ task, y, minDate, unitWidth, showCritical, showSlack, onUpdat
   );
 }
 
-function MilestoneDiamond({ task, y, minDate, unitWidth, showCritical, onUpdateTaskFields, selected, onSelect, categoryColors = {} }) {
+function MilestoneDiamond({ task, y, minDate, unitWidth, showCritical, onUpdateTaskFields, selected, onSelect, categoryColors = {}, onBeginDrag, onEndDrag }) {
   if (!task.startDate) return null;
   const offset = daysBetween(minDate, task.startDate);
   const cx = offset * unitWidth + unitWidth / 2;
@@ -645,6 +648,7 @@ function MilestoneDiamond({ task, y, minDate, unitWidth, showCritical, onUpdateT
     e.stopPropagation();
     if (onSelect) onSelect(String(task.id));
     if (!onUpdateTaskFields) return;
+    if (onBeginDrag) onBeginDrag();
     const startX = e.clientX;
     const origStart = task.startDate;
 
@@ -656,6 +660,7 @@ function MilestoneDiamond({ task, y, minDate, unitWidth, showCritical, onUpdateT
     const onUp = () => {
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
+      if (onEndDrag) onEndDrag();
     };
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);

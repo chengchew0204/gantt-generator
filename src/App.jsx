@@ -11,6 +11,7 @@ import {
 } from './utils/ExcelUtils';
 import { computeCpm } from './utils/CpmEngine';
 import { addWorkingDays, workingDaysBetween } from './utils/DateUtils';
+import useUndoRedo from './hooks/useUndoRedo';
 
 const MIN_LEFT_WIDTH = 280;
 const MIN_RIGHT_WIDTH = 300;
@@ -148,6 +149,34 @@ export default function App() {
   const chartRef = useRef(null);
   const viewBtnRef = useRef(null);
   const isDragging = useRef(false);
+  const handleExportRef = useRef(null);
+  const tasksRef = useRef(tasks);
+  tasksRef.current = tasks;
+
+  const { pushState, undo, redo, canUndo, canRedo, beginBatch, endBatch } = useUndoRedo();
+
+  const recordAndSetTasks = useCallback((updater) => {
+    pushState(tasksRef.current);
+    setTasks(updater);
+  }, [pushState]);
+
+  const handleUndo = useCallback(() => {
+    const prev = undo(tasksRef.current);
+    if (prev) setTasks(prev);
+  }, [undo]);
+
+  const handleRedo = useCallback(() => {
+    const next = redo(tasksRef.current);
+    if (next) setTasks(next);
+  }, [redo]);
+
+  const handleBeginDrag = useCallback(() => {
+    beginBatch(tasksRef.current);
+  }, [beginBatch]);
+
+  const handleEndDrag = useCallback(() => {
+    endBatch();
+  }, [endBatch]);
 
   const skipWeekends = toBool(viewOptions.skipWeekends);
   const prevSkipWeekends = useRef(skipWeekends);
@@ -186,7 +215,7 @@ export default function App() {
   }, [enrichedTasks, collapsedParents]);
 
   const handleUpdateTask = useCallback((taskId, field, value) => {
-    setTasks((prev) =>
+    recordAndSetTasks((prev) =>
       prev.map((t) => {
         if (String(t.id) !== String(taskId)) return t;
         const updated = { ...t, [field]: value };
@@ -203,26 +232,25 @@ export default function App() {
         return updated;
       }),
     );
-  }, [skipWeekends]);
+  }, [skipWeekends, recordAndSetTasks]);
 
   // Batch-update multiple fields at once with no auto-calc side effects.
   // Used by Gantt bar drags where dates are computed directly from pixel offsets.
   const handleUpdateTaskFields = useCallback((taskId, fields) => {
-    setTasks((prev) =>
+    recordAndSetTasks((prev) =>
       prev.map((t) => {
         if (String(t.id) !== String(taskId)) return t;
         const updated = { ...t, ...fields };
-        // Always keep duration consistent with the final start/end dates.
         if (updated.startDate && updated.endDate) {
           updated.duration = workingDaysBetween(updated.startDate, updated.endDate, skipWeekends);
         }
         return updated;
       }),
     );
-  }, [skipWeekends]);
+  }, [skipWeekends, recordAndSetTasks]);
 
   const handleAddTask = useCallback(() => {
-    setTasks((prev) => [
+    recordAndSetTasks((prev) => [
       ...prev,
       {
         id: nextId(prev),
@@ -241,20 +269,20 @@ export default function App() {
         parentId: '',
       },
     ]);
-  }, []);
+  }, [recordAndSetTasks]);
 
   const handleDeleteTask = useCallback((taskId) => {
-    setTasks((prev) => prev.filter((t) => String(t.id) !== String(taskId)));
-  }, []);
+    recordAndSetTasks((prev) => prev.filter((t) => String(t.id) !== String(taskId)));
+  }, [recordAndSetTasks]);
 
   const handleReorderTask = useCallback((fromIndex, toIndex) => {
-    setTasks((prev) => {
+    recordAndSetTasks((prev) => {
       const next = [...prev];
       const [moved] = next.splice(fromIndex, 1);
       next.splice(toIndex, 0, moved);
       return next;
     });
-  }, []);
+  }, [recordAndSetTasks]);
 
   const handleToggleCollapse = useCallback((parentId) => {
     setCollapsedParents((prev) => {
@@ -341,6 +369,32 @@ export default function App() {
     });
   }, [viewOptions, visibleColumns, categoryColors, projectName]);
 
+  useEffect(() => {
+    const handler = (e) => {
+      const mod = e.metaKey || e.ctrlKey;
+      if (!mod) return;
+
+      if (e.key === 's' || e.key === 'S') {
+        e.preventDefault();
+        handleExportRef.current();
+        return;
+      }
+
+      if (e.key === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        handleUndo();
+        return;
+      }
+
+      if ((e.key === 'z' && e.shiftKey) || (e.key === 'Z' && e.shiftKey) || e.key === 'y') {
+        e.preventDefault();
+        handleRedo();
+      }
+    };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [handleUndo, handleRedo]);
+
   const handleImport = useCallback(async (file) => {
     try {
       const result = await importExcel(file);
@@ -383,8 +437,10 @@ export default function App() {
   }, []);
 
   const handleExport = useCallback(() => {
-    exportExcel(enrichedTasks, settings);
-  }, [enrichedTasks, settings]);
+    const filename = 'GanttGen-' + (projectName.trim() || 'Project').replace(/[^\w\s-]/g, '') + '.xlsx';
+    exportExcel(enrichedTasks, settings, filename);
+  }, [enrichedTasks, settings, projectName]);
+  handleExportRef.current = handleExport;
 
   const handleExportPng = useCallback(async () => {
     if (!chartRef.current) return;
@@ -438,6 +494,10 @@ export default function App() {
         onExportPng={handleExportPng}
         onOpenGuide={handleOpenGuide}
         onOpenTheme={handleOpenTheme}
+        onUndo={handleUndo}
+        onRedo={handleRedo}
+        canUndo={canUndo}
+        canRedo={canRedo}
         viewOptionsOpen={viewOptionsOpen}
         onToggleViewOptions={handleToggleViewOptions}
         viewBtnRef={viewBtnRef}
@@ -490,6 +550,8 @@ export default function App() {
             headerHeight={effectiveHeaderHeight}
             datePickField={datePickField}
             onDatePickField={setDatePickField}
+            onBeginDrag={handleBeginDrag}
+            onEndDrag={handleEndDrag}
           />
         </div>
 
@@ -515,6 +577,8 @@ export default function App() {
             categoryColors={categoryColors}
             datePickField={datePickField}
             onDatePickField={setDatePickField}
+            onBeginDrag={handleBeginDrag}
+            onEndDrag={handleEndDrag}
           />
         </div>
       </div>

@@ -82,11 +82,9 @@ export async function importExcel(file) {
 }
 
 /**
- * @param {object[]} tasks
- * @param {object} settings
- * @param {string} [filename='GanttGen_Project.xlsx']
+ * Build an xlsx workbook from tasks + settings, returned as a Uint8Array.
  */
-export function exportExcel(tasks, settings, filename = 'GanttGen_Project.xlsx') {
+function buildWorkbook(tasks, settings) {
   const wb = XLSX.utils.book_new();
 
   const taskRows = tasks.map((t) => [
@@ -125,8 +123,19 @@ export function exportExcel(tasks, settings, filename = 'GanttGen_Project.xlsx')
   const settingsSheet = XLSX.utils.aoa_to_sheet(settingsRows);
   XLSX.utils.book_append_sheet(wb, settingsSheet, 'Settings');
 
+  return wb;
+}
+
+/**
+ * @param {object[]} tasks
+ * @param {object} settings
+ * @param {string} [filename='GanttGen_Project.xlsx']
+ */
+export function exportExcel(tasks, settings, filename = 'GanttGen_Project.xlsx') {
+  const wb = buildWorkbook(tasks, settings);
   XLSX.writeFile(wb, filename);
 }
+
 
 /**
  * Build a settings object mapping CSS variable suffixes to hex values from

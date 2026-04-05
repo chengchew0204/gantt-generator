@@ -16,6 +16,8 @@ import {
   CircleDot,
   Pencil,
   BookOpen,
+  Undo2,
+  Redo2,
 } from 'lucide-react';
 import ViewOptions from './ViewOptions';
 
@@ -35,6 +37,10 @@ export default function Dashboard({
   onExportPng,
   onOpenGuide,
   onOpenTheme,
+  onUndo,
+  onRedo,
+  canUndo,
+  canRedo,
   viewOptionsOpen,
   onToggleViewOptions,
   viewBtnRef,
@@ -106,6 +112,10 @@ export default function Dashboard({
           </div>
           <span style={{ color: 'var(--color-border)' }}>/</span>
           <EditableProjectName value={projectName} onChange={onChangeProjectName} />
+          <div className="flex items-center gap-0.5">
+            <IconButton icon={Undo2} title="Undo (Ctrl+Z)" onClick={onUndo} disabled={canUndo && !canUndo()} />
+            <IconButton icon={Redo2} title="Redo (Ctrl+Shift+Z)" onClick={onRedo} disabled={canRedo && !canRedo()} />
+          </div>
         </div>
 
         <div className="flex items-center gap-2">
@@ -250,23 +260,40 @@ function TaskInfoCard({ icon: Icon, label, task, color }) {
   );
 }
 
-function ActionButton({ icon: Icon, label, onClick, primary, guideAttr }) {
+function ActionButton({ icon: Icon, label, onClick, primary, guideAttr, disabled }) {
   return (
     <button
       onClick={onClick}
+      disabled={disabled}
       title={label}
       data-guide={guideAttr || undefined}
-      className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer"
+      className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-default"
       style={{
         backgroundColor: primary ? 'var(--color-accent)' : 'var(--color-bg-tertiary)',
         color: primary ? '#fff' : 'var(--color-text-secondary)',
         border: primary ? 'none' : '1px solid var(--color-border)',
       }}
-      onMouseEnter={(e) => { if (!primary) e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)'; }}
+      onMouseEnter={(e) => { if (!primary && !disabled) e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)'; }}
       onMouseLeave={(e) => { if (!primary) e.currentTarget.style.backgroundColor = 'var(--color-bg-tertiary)'; }}
     >
       <Icon size={14} />
       <span className="hidden sm:inline">{label}</span>
+    </button>
+  );
+}
+
+function IconButton({ icon: Icon, title, onClick, disabled }) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      className="p-1 rounded transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-default"
+      style={{ color: 'var(--color-text-muted)' }}
+      onMouseEnter={(e) => { if (!disabled) e.currentTarget.style.color = 'var(--color-text-secondary)'; }}
+      onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--color-text-muted)'; }}
+    >
+      <Icon size={14} />
     </button>
   );
 }

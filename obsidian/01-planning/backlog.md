@@ -13,8 +13,7 @@
 
 <!-- Tasks that are identified but not yet prioritized. -->
 
-- Keyboard shortcuts for common actions (import, save, toggle view)
-- Undo/redo stack for table edits
+- Keyboard shortcuts for common actions (import, toggle view)
 - Performance spike: SVG vs Canvas for 100+ task projects
 
 ## Completed
@@ -41,3 +40,4 @@
 - PNG export via `html-to-image` -- verified working (2026-04-02)
 - Final build verification -- single `dist/index.html` (756 KB), zero external network calls (2026-04-02)
 - Code audit and bug fixes -- fixed 7 bugs: hooks rule violation in GanttChart, DateUtils weekend off-by-one, duration string coercion, DataTable undefined guard, ViewOptions effect churn, unused imports (2026-04-02)
+- Undo/redo stack for table edits with batch support for drag operations; keyboard shortcuts Ctrl+S (save), Ctrl+Z (undo), Ctrl+Shift+Z (redo); toolbar buttons (2026-04-05)

@@ -62,6 +62,8 @@ export default function DataTable({
   headerHeight: headerHeightProp,
   datePickField,
   onDatePickField,
+  onBeginDrag,
+  onEndDrag,
 }) {
   const headerH = headerHeightProp || HEADER_HEIGHT;
   const [showColumnPicker, setShowColumnPicker] = useState(false);
@@ -69,11 +71,54 @@ export default function DataTable({
   const [colWidths, setColWidths] = useState(DEFAULT_COL_WIDTHS);
   const [dragIndex, setDragIndex] = useState(null);
   const [dropIndex, setDropIndex] = useState(null);
+  const [editingCell, setEditingCell] = useState(null);
   const dragRef = useRef(null);
   const dropRef = useRef(null);
   const pickerRef = useRef(null);
   const scrollRef = useRef(null);
   const suppressScroll = useRef(false);
+
+  const cols = columns.filter((c) => visibleColumns.has(c.key));
+
+  const navigateCell = useCallback((rowIndex, colKey, direction) => {
+    const editableCols = cols.filter((c) => c.key !== 'id');
+    const colIdx = editableCols.findIndex((c) => c.key === colKey);
+
+    let nextRow = rowIndex;
+    let nextColIdx = colIdx;
+
+    const step = () => {
+      if (direction === 'up') nextRow--;
+      else if (direction === 'down') nextRow++;
+      else if (direction === 'left') nextColIdx--;
+      else if (direction === 'right') nextColIdx++;
+    };
+
+    const isCellEditable = (r, c) => {
+      if (r < 0 || r >= tasks.length) return false;
+      if (c < 0 || c >= editableCols.length) return false;
+      const ck = editableCols[c].key;
+      if (ck === 'status') return false;
+      const t = tasks[r];
+      if (t.isParent && (ck === 'startDate' || ck === 'endDate' || ck === 'progress' || ck === 'duration')) return false;
+      return true;
+    };
+
+    const maxSteps = Math.max(tasks.length, editableCols.length);
+    for (let i = 0; i < maxSteps; i++) {
+      step();
+      if (nextRow < 0 || nextRow >= tasks.length || nextColIdx < 0 || nextColIdx >= editableCols.length) {
+        setEditingCell(null);
+        return;
+      }
+      if (isCellEditable(nextRow, nextColIdx)) {
+        setEditingCell({ rowIndex: nextRow, colKey: editableCols[nextColIdx].key });
+        if (onSelectTask) onSelectTask(String(tasks[nextRow].id));
+        return;
+      }
+    }
+    setEditingCell(null);
+  }, [cols, tasks, onSelectTask]);
 
   useEffect(() => {
     if (!showColumnPicker) return;
@@ -167,8 +212,6 @@ export default function DataTable({
     document.addEventListener('mouseup', onUp);
   }, [tasks.length, onReorderTask]);
 
-  const cols = columns.filter((c) => visibleColumns.has(c.key));
-
   if (tasks.length === 0 && (!allTasks || allTasks.length === 0)) {
     return (
       <div className="flex flex-col h-full">
@@ -258,6 +301,9 @@ export default function DataTable({
               onDatePickField={onDatePickField}
               onDragStart={handleDragStart}
               isDragging={dragIndex === i}
+              editingCell={editingCell}
+              onSetEditingCell={setEditingCell}
+              onNavigateCell={navigateCell}
             />
           ))}
           {dragIndex != null && dropIndex != null && dropIndex !== dragIndex && dropIndex !== dragIndex + 1 && (
@@ -318,6 +364,9 @@ function TaskRow({
   onDatePickField,
   onDragStart,
   isDragging,
+  editingCell,
+  onSetEditingCell,
+  onNavigateCell,
 }) {
   const [hovering, setHovering] = useState(false);
 
@@ -366,9 +415,22 @@ function TaskRow({
       </div>
       {cols.map((col) => {
         const w = getColW(colWidths, col.key);
+        const isCellEditing = editingCell && editingCell.rowIndex === index && editingCell.colKey === col.key;
         return (
           <div key={col.key} className="flex-shrink-0 overflow-hidden" style={{ width: w, maxWidth: w }}>
-            <EditableCell task={task} col={col} isParent={isParent} onUpdateTask={onUpdateTask} selected={selected} datePickField={datePickField} onDatePickField={onDatePickField} />
+            <EditableCell
+              task={task}
+              col={col}
+              isParent={isParent}
+              onUpdateTask={onUpdateTask}
+              selected={selected}
+              datePickField={datePickField}
+              onDatePickField={onDatePickField}
+              editing={isCellEditing}
+              onStartEditing={() => onSetEditingCell({ rowIndex: index, colKey: col.key })}
+              onStopEditing={() => onSetEditingCell(null)}
+              onNavigate={(dir) => onNavigateCell(index, col.key, dir)}
+            />
           </div>
         );
       })}
@@ -389,9 +451,9 @@ function TaskRow({
   );
 }
 
-function EditableCell({ task, col, isParent, onUpdateTask, selected, datePickField, onDatePickField }) {
-  const [editing, setEditing] = useState(false);
+function EditableCell({ task, col, isParent, onUpdateTask, selected, datePickField, onDatePickField, editing, onStartEditing, onStopEditing, onNavigate }) {
   const inputRef = useRef(null);
+  const navigatingRef = useRef(false);
 
   const value = task[col.key];
   const isDateCol = col.type === 'date' && (col.key === 'startDate' || col.key === 'endDate');
@@ -403,28 +465,84 @@ function EditableCell({ task, col, isParent, onUpdateTask, selected, datePickFie
     }
   }, [editing]);
 
-  const commit = (newVal, clearPick) => {
-    setEditing(false);
-    if (clearPick && onDatePickField && isDateCol) onDatePickField(null);
+  const commitValue = useCallback((newVal) => {
     if (col.type === 'number') {
       const n = parseFloat(newVal);
       onUpdateTask(task.id, col.key, Number.isFinite(n) ? n : 0);
     } else {
       onUpdateTask(task.id, col.key, newVal);
     }
-  };
+  }, [task.id, col.key, col.type, onUpdateTask]);
 
-  const startEditing = () => {
-    setEditing(true);
+  const commitAndStop = useCallback((newVal, clearPick) => {
+    if (navigatingRef.current) return;
+    onStopEditing();
+    if (clearPick && onDatePickField && isDateCol) onDatePickField(null);
+    commitValue(newVal);
+  }, [onStopEditing, onDatePickField, isDateCol, commitValue]);
+
+  const commitAndNavigate = useCallback((newVal, direction) => {
+    navigatingRef.current = true;
+    commitValue(newVal);
+    if (isDateCol && onDatePickField) onDatePickField(null);
+    onNavigate(direction);
+    requestAnimationFrame(() => { navigatingRef.current = false; });
+  }, [commitValue, isDateCol, onDatePickField, onNavigate]);
+
+  const handleStartEditing = () => {
+    onStartEditing();
     if (isDateCol && onDatePickField) {
       onDatePickField(col.key);
     }
   };
 
-  const cancelEditing = () => {
-    setEditing(false);
+  const cancelEditing = useCallback(() => {
+    onStopEditing();
     if (isDateCol && onDatePickField) onDatePickField(null);
-  };
+  }, [onStopEditing, isDateCol, onDatePickField]);
+
+  const handleKeyDown = useCallback((e, getValue) => {
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      commitAndNavigate(getValue(), 'up');
+      return;
+    }
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      commitAndNavigate(getValue(), 'down');
+      return;
+    }
+    if (e.key === 'ArrowLeft') {
+      const input = e.target;
+      const atStart = input.selectionStart === 0 && input.selectionEnd === 0;
+      if (col.type === 'text' && !atStart) return;
+      e.preventDefault();
+      commitAndNavigate(getValue(), 'left');
+      return;
+    }
+    if (e.key === 'ArrowRight') {
+      const input = e.target;
+      const len = (input.value || '').length;
+      const atEnd = input.selectionStart === len && input.selectionEnd === len;
+      if (col.type === 'text' && !atEnd) return;
+      e.preventDefault();
+      commitAndNavigate(getValue(), 'right');
+      return;
+    }
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      commitAndNavigate(getValue(), e.shiftKey ? 'left' : 'right');
+      return;
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      commitAndNavigate(getValue(), 'down');
+      return;
+    }
+    if (e.key === 'Escape') {
+      cancelEditing();
+    }
+  }, [commitAndNavigate, cancelEditing, col.type]);
 
   if (col.key === 'id') {
     return (
@@ -448,7 +566,7 @@ function EditableCell({ task, col, isParent, onUpdateTask, selected, datePickFie
   if (!editing) {
     return (
       <button
-        onClick={startEditing}
+        onClick={handleStartEditing}
         className="block w-full text-left px-2 text-xs cursor-text truncate"
         style={{
           color: value ? 'var(--color-text-primary)' : 'var(--color-text-muted)',
@@ -473,11 +591,8 @@ function EditableCell({ task, col, isParent, onUpdateTask, selected, datePickFie
         ref={inputRef}
         type="date"
         defaultValue={value || ''}
-        onBlur={(e) => commit(e.target.value || null, false)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') commit(e.target.value || null, true);
-          if (e.key === 'Escape') cancelEditing();
-        }}
+        onBlur={(e) => commitAndStop(e.target.value || null, false)}
+        onKeyDown={(e) => handleKeyDown(e, () => e.target.value || null)}
         className="w-full px-2 text-xs outline-none"
         style={{
           height: ROW_HEIGHT - 2,
@@ -495,11 +610,8 @@ function EditableCell({ task, col, isParent, onUpdateTask, selected, datePickFie
       ref={inputRef}
       type={col.type === 'number' ? 'number' : 'text'}
       defaultValue={value ?? ''}
-      onBlur={(e) => commit(e.target.value)}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') commit(e.target.value);
-        if (e.key === 'Escape') setEditing(false);
-      }}
+      onBlur={(e) => commitAndStop(e.target.value)}
+      onKeyDown={(e) => handleKeyDown(e, () => e.target.value)}
       className="w-full px-2 text-xs outline-none"
       style={{
         height: ROW_HEIGHT - 2,
