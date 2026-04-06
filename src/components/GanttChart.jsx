@@ -477,18 +477,37 @@ function DayLabels({ minDate, totalDays, unitWidth, chartWidth, height, scale })
   const fullWidth = chartWidth || drawDays * unitWidth;
 
   if (scale === 'day') {
-    const showDay = unitWidth >= 16;
+    const getDayLabelStep = () => {
+      if (unitWidth >= 16) return 1;
+      if (unitWidth >= 12) return 2;
+      if (unitWidth >= 9) return 3;
+      if (unitWidth >= 7) return 5;
+      if (unitWidth >= 5) return 7;
+      return 14;
+    };
+    const labelStep = getDayLabelStep();
+    const compactLabel = labelStep >= 7;
     for (let i = 0; i < drawDays; i++) {
       const d = new Date(base);
       d.setDate(d.getDate() + i);
       const x = i * unitWidth;
       const isWeekend = d.getDay() === 0 || d.getDay() === 6;
+      const isMonthStart = d.getDate() === 1;
+      const shouldShowDay = i === 0 || isMonthStart || i % labelStep === 0;
       labels.push(
         <g key={i}>
           {isWeekend && <rect x={x} y={0} width={unitWidth} height={height} fill="var(--color-bg-tertiary)" opacity={0.4} />}
-          {showDay && (
-            <text x={x + unitWidth / 2} y={height - 3} fill={isWeekend ? 'var(--color-text-muted)' : 'var(--color-text-secondary)'} fontSize={8} textAnchor="middle" opacity={isWeekend ? 0.5 : 0.8}>
-              {d.getDate()}
+          {shouldShowDay && (
+            <text
+              x={x + unitWidth / 2}
+              y={height - 3}
+              fill={isWeekend ? 'var(--color-text-muted)' : 'var(--color-text-secondary)'}
+              fontSize={compactLabel ? 7 : 8}
+              fontWeight={isMonthStart ? 600 : 500}
+              textAnchor="middle"
+              opacity={isWeekend ? 0.5 : 0.8}
+            >
+              {compactLabel ? d.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' }) : d.getDate()}
             </text>
           )}
         </g>,
