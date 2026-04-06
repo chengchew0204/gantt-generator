@@ -39,7 +39,7 @@ const DEFAULT_COL_WIDTHS = {
   duration: labelWidth('Duration'),
   progress: labelWidth('Progress (%)'),
   status: labelWidth('Status'),
-  owner: labelWidth('Owner') + 16,
+  owner: labelWidth('Owner') + 12,
   remarks: labelWidth('Remarks'),
   baselineStart: labelWidth('Baseline Start'),
   baselineEnd: labelWidth('Baseline End'),
