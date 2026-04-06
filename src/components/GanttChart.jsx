@@ -2,9 +2,10 @@ import { useState, useMemo, useRef, useCallback, useEffect } from 'react';
 import { BarChart3, Calendar, CalendarDays, ZoomIn, ZoomOut } from 'lucide-react';
 
 const ROW_HEIGHT = 32;
-const HEADER_HEIGHT = 56;
 const TOOLBAR_HEIGHT = 28;
+const MONTH_LABEL_HEIGHT = 16;
 const WEEK_LABEL_HEIGHT = 18;
+const DAY_LABEL_HEIGHT = 18;
 const BAR_HEIGHT = 16;
 const BASELINE_HEIGHT = 4;
 const SUMMARY_HEIGHT = 8;
@@ -184,9 +185,6 @@ export default function GanttChart({ tasks, allTasks, viewOptions = {}, scrollTo
   const bodyHeight = tasks.length * ROW_HEIGHT;
   const containerWidth = scrollRef.current?.clientWidth || 0;
   const chartWidth = Math.max(dataWidth + LABEL_RIGHT_PADDING, containerWidth, 600);
-  const toolbarH = show.scaleButtons ? TOOLBAR_HEIGHT : 0;
-  const timelineH = HEADER_HEIGHT - TOOLBAR_HEIGHT;
-
   return (
     <div className="flex flex-col h-full">
       {/* Toolbar: scale + zoom */}
@@ -224,9 +222,26 @@ export default function GanttChart({ tasks, allTasks, viewOptions = {}, scrollTo
         </div>
       )}
 
-      {/* Week number labels (W1, W2, W3...) */}
+      {/* Month Labels row */}
+      {show.monthLabels && (
+        <div className="flex-shrink-0 overflow-hidden" style={{ height: MONTH_LABEL_HEIGHT, backgroundColor: 'var(--color-bg-secondary)', borderBottom: show.weekLabels || show.dayLabels ? '1px solid var(--color-border-subtle)' : '1px solid var(--color-border)' }}>
+          <svg
+            width={Math.max(chartWidth, dataWidth)}
+            height={MONTH_LABEL_HEIGHT}
+            className="block"
+            style={{ transform: `translateX(${-hScrollLeft}px)`, cursor: isPicking ? 'crosshair' : 'default' }}
+            onClick={handleGridDateClick}
+            onMouseMove={handleGridMouseMove}
+            onMouseLeave={handleGridMouseLeave}
+          >
+            <MonthLabels minDate={minDate} totalDays={totalDays} unitWidth={unitWidth} chartWidth={chartWidth} height={MONTH_LABEL_HEIGHT} scale={scale} />
+          </svg>
+        </div>
+      )}
+
+      {/* Week Number Labels row */}
       {show.weekLabels && (
-        <div className="flex-shrink-0 overflow-hidden" style={{ height: WEEK_LABEL_HEIGHT, backgroundColor: 'var(--color-bg-secondary)', borderBottom: '1px solid var(--color-border-subtle)' }}>
+        <div className="flex-shrink-0 overflow-hidden" style={{ height: WEEK_LABEL_HEIGHT, backgroundColor: 'var(--color-bg-secondary)', borderBottom: show.dayLabels ? '1px solid var(--color-border-subtle)' : '1px solid var(--color-border)' }}>
           <svg
             width={Math.max(chartWidth, dataWidth)}
             height={WEEK_LABEL_HEIGHT}
@@ -238,21 +253,21 @@ export default function GanttChart({ tasks, allTasks, viewOptions = {}, scrollTo
         </div>
       )}
 
-      {/* Timeline date header (fixed, synced horizontally) */}
-      {(show.monthLabels || show.dayLabels) && (
-        <div className="flex-shrink-0 overflow-hidden" style={{ height: timelineH, backgroundColor: 'var(--color-bg-secondary)', borderBottom: '1px solid var(--color-border)' }}>
+      {/* Day/Date Labels row */}
+      {show.dayLabels && (
+        <div className="flex-shrink-0 overflow-hidden" style={{ height: DAY_LABEL_HEIGHT, backgroundColor: 'var(--color-bg-secondary)', borderBottom: '1px solid var(--color-border)' }}>
           <svg
             width={Math.max(chartWidth, dataWidth)}
-            height={timelineH}
+            height={DAY_LABEL_HEIGHT}
             className="block"
             style={{ transform: `translateX(${-hScrollLeft}px)`, cursor: isPicking ? 'crosshair' : 'default' }}
             onClick={handleGridDateClick}
             onMouseMove={handleGridMouseMove}
             onMouseLeave={handleGridMouseLeave}
           >
-            <TimelineHeader minDate={minDate} totalDays={totalDays} unitWidth={unitWidth} scale={scale} headerHeight={timelineH} chartWidth={chartWidth} showMonthLabels={show.monthLabels} showDayLabels={show.dayLabels} />
+            <DayLabels minDate={minDate} totalDays={totalDays} unitWidth={unitWidth} chartWidth={chartWidth} height={DAY_LABEL_HEIGHT} scale={scale} />
             {isPicking && hoveredDate && (
-              <HoverDateHighlight date={hoveredDate} minDate={minDate} unitWidth={unitWidth} height={timelineH} label={hoveredDateLabel} />
+              <HoverDateHighlight date={hoveredDate} minDate={minDate} unitWidth={unitWidth} height={DAY_LABEL_HEIGHT} label={hoveredDateLabel} />
             )}
           </svg>
         </div>
@@ -335,37 +350,28 @@ function ZoomButton({ icon: Icon, onClick, disabled }) {
   );
 }
 
-function TimelineHeader({ minDate, totalDays, unitWidth, scale, headerHeight, chartWidth, showMonthLabels = true, showDayLabels = true }) {
+function MonthLabels({ minDate, totalDays, unitWidth, chartWidth, height, scale }) {
   const labels = [];
   const base = parseLocal(minDate);
   const visibleDays = Math.ceil((chartWidth || totalDays * unitWidth) / unitWidth) + 1;
   const drawDays = Math.max(totalDays, visibleDays);
+  const fullWidth = chartWidth || drawDays * unitWidth;
 
   if (scale === 'day') {
     let lastMonth = -1;
     for (let i = 0; i < drawDays; i++) {
       const d = new Date(base);
       d.setDate(d.getDate() + i);
-      const x = i * unitWidth;
-      const isWeekend = d.getDay() === 0 || d.getDay() === 6;
-      const dayLabel = d.getDate();
       const month = d.getMonth();
-      const showMonth = month !== lastMonth;
-      const showDay = unitWidth >= 16;
-
-      if (showMonth) lastMonth = month;
-
-      const monthName = d.toLocaleDateString('en-US', { month: 'short' });
-      const showYear = d.getMonth() === 0 || i === 0;
-      const monthText = showYear ? `${monthName} ${d.getFullYear()}` : monthName;
-
-      labels.push(
-        <g key={i}>
-          {isWeekend && <rect x={x} y={0} width={unitWidth} height={headerHeight} fill="var(--color-bg-tertiary)" opacity={0.4} />}
-          {showMonthLabels && showMonth && <text x={x + 3} y={11} fill="var(--color-text-muted)" fontSize={8} fontWeight={600}>{monthText}</text>}
-          {showDayLabels && showDay && <text x={x + unitWidth / 2} y={headerHeight - 3} fill={isWeekend ? 'var(--color-text-muted)' : 'var(--color-text-secondary)'} fontSize={8} textAnchor="middle" opacity={isWeekend ? 0.5 : 0.8}>{dayLabel}</text>}
-        </g>,
-      );
+      if (month !== lastMonth) {
+        lastMonth = month;
+        const monthName = d.toLocaleDateString('en-US', { month: 'short' });
+        const showYear = d.getMonth() === 0 || i === 0;
+        const monthText = showYear ? `${monthName} ${d.getFullYear()}` : monthName;
+        labels.push(
+          <text key={i} x={i * unitWidth + 3} y={height - 3} fill="var(--color-text-muted)" fontSize={9} fontWeight={600}>{monthText}</text>,
+        );
+      }
     }
   } else {
     const startDate = new Date(base);
@@ -379,16 +385,69 @@ function TimelineHeader({ minDate, totalDays, unitWidth, scale, headerHeight, ch
       const x = dayOffset * unitWidth;
       if (x >= -unitWidth * 7 && x < totalW + unitWidth * 7) {
         const month = weekStart.getMonth();
-        const showMonth = month !== lastMonth;
-        if (showMonth) lastMonth = month;
-        const monthName = weekStart.toLocaleDateString('en-US', { month: 'short' });
-        const showYear = weekStart.getMonth() === 0 || weekIndex === 0;
-        const monthText = showYear ? `${monthName} ${weekStart.getFullYear()}` : monthName;
+        if (month !== lastMonth) {
+          lastMonth = month;
+          const monthName = weekStart.toLocaleDateString('en-US', { month: 'short' });
+          const showYear = weekStart.getMonth() === 0 || weekIndex === 0;
+          const monthText = showYear ? `${monthName} ${weekStart.getFullYear()}` : monthName;
+          labels.push(
+            <text key={weekIndex} x={Math.max(x, 0) + 3} y={height - 3} fill="var(--color-text-muted)" fontSize={9} fontWeight={600}>{monthText}</text>,
+          );
+        }
+      }
+      weekStart.setDate(weekStart.getDate() + 7);
+      weekIndex++;
+      if (weekIndex > 200) break;
+    }
+  }
+
+  return (
+    <g>
+      <rect x={0} y={0} width={fullWidth} height={height} fill="var(--color-bg-secondary)" />
+      {labels}
+    </g>
+  );
+}
+
+function DayLabels({ minDate, totalDays, unitWidth, chartWidth, height, scale }) {
+  const labels = [];
+  const base = parseLocal(minDate);
+  const visibleDays = Math.ceil((chartWidth || totalDays * unitWidth) / unitWidth) + 1;
+  const drawDays = Math.max(totalDays, visibleDays);
+  const fullWidth = chartWidth || drawDays * unitWidth;
+
+  if (scale === 'day') {
+    const showDay = unitWidth >= 16;
+    for (let i = 0; i < drawDays; i++) {
+      const d = new Date(base);
+      d.setDate(d.getDate() + i);
+      const x = i * unitWidth;
+      const isWeekend = d.getDay() === 0 || d.getDay() === 6;
+      labels.push(
+        <g key={i}>
+          {isWeekend && <rect x={x} y={0} width={unitWidth} height={height} fill="var(--color-bg-tertiary)" opacity={0.4} />}
+          {showDay && (
+            <text x={x + unitWidth / 2} y={height - 3} fill={isWeekend ? 'var(--color-text-muted)' : 'var(--color-text-secondary)'} fontSize={8} textAnchor="middle" opacity={isWeekend ? 0.5 : 0.8}>
+              {d.getDate()}
+            </text>
+          )}
+        </g>,
+      );
+    }
+  } else {
+    const startDate = new Date(base);
+    let weekStart = new Date(startDate);
+    weekStart.setDate(weekStart.getDate() - weekStart.getDay() + 1);
+    let weekIndex = 0;
+    const totalW = chartWidth || drawDays * unitWidth;
+    while (daysBetween(toLocalIso(startDate), toLocalIso(weekStart)) < drawDays + 7) {
+      const dayOffset = daysBetween(minDate, toLocalIso(weekStart));
+      const x = dayOffset * unitWidth;
+      if (x >= -unitWidth * 7 && x < totalW + unitWidth * 7) {
         labels.push(
-          <g key={weekIndex}>
-            {showMonthLabels && showMonth && <text x={Math.max(x, 0) + 3} y={11} fill="var(--color-text-muted)" fontSize={8} fontWeight={600}>{monthText}</text>}
-            {showDayLabels && <text x={x + 3} y={headerHeight - 3} fill="var(--color-text-secondary)" fontSize={7} opacity={0.8}>{weekStart.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' })}</text>}
-          </g>,
+          <text key={weekIndex} x={x + 3} y={height - 3} fill="var(--color-text-secondary)" fontSize={7} opacity={0.8}>
+            {weekStart.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' })}
+          </text>,
         );
       }
       weekStart.setDate(weekStart.getDate() + 7);
@@ -397,10 +456,9 @@ function TimelineHeader({ minDate, totalDays, unitWidth, scale, headerHeight, ch
     }
   }
 
-  const fullWidth = chartWidth || drawDays * unitWidth;
   return (
     <g>
-      <rect x={0} y={0} width={fullWidth} height={headerHeight} fill="var(--color-bg-secondary)" />
+      <rect x={0} y={0} width={fullWidth} height={height} fill="var(--color-bg-secondary)" />
       {labels}
     </g>
   );
@@ -430,7 +488,7 @@ function WeekLabels({ minDate, totalDays, unitWidth, chartWidth, height }) {
         <g key={i}>
           <rect x={x} y={0} width={weekWidth} height={height} fill="transparent" />
           <line x1={x} y1={0} x2={x} y2={height} stroke="var(--color-border-subtle)" strokeWidth={1} opacity={0.5} />
-          <text x={x + 4} y={height - 4} fill="var(--color-text-muted)" fontSize={9} fontWeight={500}>
+          <text x={x + 4} y={height - 4} fill="var(--color-text-muted)" fontSize={8} fontWeight={500}>
             W{weekNum}
           </text>
         </g>,

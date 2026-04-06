@@ -52,7 +52,9 @@ function measureFlexColumnExportHeight(rootEl) {
   let h = 0;
   for (let i = 0; i < scrollIdx; i++) h += children[i].offsetHeight;
   h += contentH;
-  for (let i = scrollIdx + 1; i < children.length; i++) h += children[i].offsetHeight;
+  for (let i = scrollIdx + 1; i < children.length; i++) {
+    if (!children[i].hasAttribute('data-export-exclude')) h += children[i].offsetHeight;
+  }
   return Math.ceil(h);
 }
 
@@ -230,9 +232,14 @@ export default function App() {
   const skipWeekends = toBool(viewOptions.skipWeekends);
   const prevSkipWeekends = useRef(skipWeekends);
   const showScaleButtons = toBool(viewOptions.showScaleButtons ?? true);
+  const showMonthLabels = toBool(viewOptions.showMonthLabels ?? true);
   const showWeekLabels = toBool(viewOptions.showWeekLabels ?? false);
-  const showAnyTimelineLabel = toBool(viewOptions.showMonthLabels ?? true) || toBool(viewOptions.showDayLabels ?? true);
-  const effectiveHeaderHeight = (showScaleButtons ? 28 : 0) + (showWeekLabels ? 18 : 0) + (showAnyTimelineLabel ? 28 : 0);
+  const showDayLabels = toBool(viewOptions.showDayLabels ?? true);
+  const effectiveHeaderHeight =
+    (showScaleButtons ? 28 : 0) +
+    (showMonthLabels ? 16 : 0) +
+    (showWeekLabels ? 18 : 0) +
+    (showDayLabels ? 18 : 0);
 
   const wbsTasks = useMemo(() => buildWbsTree(tasks), [tasks]);
 
@@ -494,6 +501,11 @@ export default function App() {
   const handleExportPng = useCallback(async (mode) => {
     const target = mode === 'full' ? containerRef.current : chartRef.current;
     if (!target) return;
+
+    const scrollbarStyle = document.createElement('style');
+    scrollbarStyle.textContent = '::-webkit-scrollbar{display:none!important}*{scrollbar-width:none!important}';
+    document.head.appendChild(scrollbarStyle);
+
     try {
       const bgColor = getComputedStyle(document.documentElement)
         .getPropertyValue('--color-bg-primary').trim() || '#0f0f12';
@@ -517,6 +529,8 @@ export default function App() {
       link.click();
     } catch (err) {
       console.error('PNG export failed:', err);
+    } finally {
+      document.head.removeChild(scrollbarStyle);
     }
   }, []);
 

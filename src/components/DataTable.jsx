@@ -10,7 +10,7 @@ import {
 } from 'lucide-react';
 
 const ROW_HEIGHT = 32;
-const HEADER_HEIGHT = 56;
+const HEADER_HEIGHT = 62;
 const MIN_COL_WIDTH = 32;
 
 const STATUS_OPTIONS = [
@@ -240,40 +240,48 @@ export default function DataTable({
     <div className="flex flex-col h-full">
       {/* Header */}
       <div
-        className="flex-shrink-0 overflow-hidden"
+        className="flex-shrink-0 relative"
         style={{
           height: headerH,
           backgroundColor: 'var(--color-bg-secondary)',
           borderBottom: '1px solid var(--color-border)',
         }}
       >
-        <div
-          className="flex items-center text-xs font-medium whitespace-nowrap h-full"
-          style={{ minWidth: totalMinWidth, color: 'var(--color-text-muted)', transform: `translateX(${-hScrollLeft}px)` }}
-        >
-          <div className="w-6 flex-shrink-0 px-1" />
-          {cols.map((col) => (
-            <ResizableHeaderCell
-              key={col.key}
-              col={col}
-              width={getColW(colWidths, col.key)}
-              onResizeStart={handleResizeCol}
-            />
-          ))}
-          <div className="flex-1" />
-          <div className="w-8 flex-shrink-0 px-1 relative" ref={pickerRef}>
-            <button
-              onClick={() => setShowColumnPicker((v) => !v)}
-              className="p-0.5 rounded cursor-pointer transition-colors"
-              style={{ color: 'var(--color-text-muted)' }}
-              title="Toggle columns"
-            >
-              <Columns3 size={12} />
-            </button>
-            {showColumnPicker && (
-              <ColumnPicker columns={columns} visibleColumns={visibleColumns} onToggle={onToggleColumn} />
-            )}
+        {/* Column labels — clipped so horizontal-scroll translation stays within bounds */}
+        <div className="absolute inset-0 overflow-hidden" style={{ right: 32 }}>
+          <div
+            className="flex items-center text-xs font-medium whitespace-nowrap h-full"
+            style={{ minWidth: totalMinWidth, color: 'var(--color-text-muted)', transform: `translateX(${-hScrollLeft}px)` }}
+          >
+            <div className="w-6 flex-shrink-0 px-1" />
+            {cols.map((col) => (
+              <ResizableHeaderCell
+                key={col.key}
+                col={col}
+                width={getColW(colWidths, col.key)}
+                onResizeStart={handleResizeCol}
+              />
+            ))}
+            <div className="flex-1" />
           </div>
+        </div>
+        {/* Column picker button — sits outside the overflow-hidden zone so the dropdown can extend below the header */}
+        <div
+          className="absolute right-0 top-0 bottom-0 flex items-center px-1"
+          ref={pickerRef}
+          style={{ width: 32, backgroundColor: 'var(--color-bg-secondary)', zIndex: 30 }}
+        >
+          <button
+            onClick={() => setShowColumnPicker((v) => !v)}
+            className="p-0.5 rounded cursor-pointer transition-colors"
+            style={{ color: 'var(--color-text-muted)' }}
+            title="Toggle columns"
+          >
+            <Columns3 size={12} />
+          </button>
+          {showColumnPicker && (
+            <ColumnPicker columns={columns} visibleColumns={visibleColumns} onToggle={onToggleColumn} />
+          )}
         </div>
       </div>
 
@@ -708,7 +716,7 @@ function ColumnPicker({ columns, visibleColumns, onToggle }) {
 
 function AddRowBar({ onAddTask }) {
   return (
-    <div className="flex-shrink-0 px-3 py-2" style={{ borderTop: '1px solid var(--color-border-subtle)' }}>
+    <div data-export-exclude className="flex-shrink-0 px-3 py-2" style={{ borderTop: '1px solid var(--color-border-subtle)' }}>
       <button
         onClick={onAddTask}
         className="flex items-center gap-1.5 px-2 py-1 rounded text-xs font-medium cursor-pointer transition-colors"
