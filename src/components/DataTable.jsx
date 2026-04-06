@@ -548,7 +548,7 @@ function EditableCell({ task, col, isParent, onUpdateTask, selected, datePickFie
     return (
       <span
         className="block px-2 tabular-nums text-xs truncate"
-        style={{ color: 'var(--color-text-muted)', fontWeight: isParent ? 600 : 400, lineHeight: `${ROW_HEIGHT}px` }}
+        style={{ color: 'var(--color-text-muted)', fontWeight: isParent ? 700 : 400, lineHeight: `${ROW_HEIGHT}px` }}
       >
         {value}
       </span>
@@ -570,7 +570,7 @@ function EditableCell({ task, col, isParent, onUpdateTask, selected, datePickFie
         className="block w-full text-left px-2 text-xs cursor-text truncate"
         style={{
           color: value ? 'var(--color-text-primary)' : 'var(--color-text-muted)',
-          fontWeight: col.key === 'name' && isParent ? 600 : col.key === 'name' ? 500 : 400,
+          fontWeight: col.key === 'name' && isParent ? 700 : col.key === 'name' ? 500 : 400,
           lineHeight: `${ROW_HEIGHT}px`,
           height: ROW_HEIGHT,
         }}
@@ -625,23 +625,17 @@ function EditableCell({ task, col, isParent, onUpdateTask, selected, datePickFie
 }
 
 function ReadOnlyDisplay({ col, value, isParent }) {
-  if (col.key === 'progress') {
-    return (
-      <div className="px-2 flex items-center" style={{ height: ROW_HEIGHT }}>
-        <ProgressBar value={value} />
-      </div>
-    );
-  }
+  const pct = col.key === 'progress' ? Math.min(100, Math.max(0, value || 0)) : null;
   return (
     <span
       className="block px-2 tabular-nums text-xs truncate"
       style={{
         color: 'var(--color-text-secondary)',
-        fontWeight: isParent ? 600 : 400,
+        fontWeight: isParent ? 700 : 400,
         lineHeight: `${ROW_HEIGHT}px`,
       }}
     >
-      {col.type === 'number' ? `${value ?? 0}` : value || '-'}
+      {pct != null ? `${pct}%` : col.type === 'number' ? `${value ?? 0}` : value || '-'}
     </span>
   );
 }

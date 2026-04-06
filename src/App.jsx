@@ -16,6 +16,55 @@ import useUndoRedo from './hooks/useUndoRedo';
 const MIN_LEFT_WIDTH = 280;
 const MIN_RIGHT_WIDTH = 300;
 
+/**
+ * Find the scrollable body element within a flex-column pane root by inspecting
+ * computed CSS overflow (avoids fragile class-name matching across Tailwind versions).
+ */
+function findScrollEl(rootEl) {
+  for (const child of rootEl.children) {
+    const s = window.getComputedStyle(child);
+    if (s.overflowY === 'auto' || s.overflow === 'auto') return child;
+  }
+  return null;
+}
+
+/**
+ * Compute the export height for a single flex-column pane (DataTable or GanttChart).
+ *
+ * Strategy:
+ *  1. Find the scrollable body child via computed overflow style.
+ *  2. Measure the body's INNER content element height via getBoundingClientRect() —
+ *     this reflects the real rendered SVG/rows height, not the stretched flex container.
+ *  3. Sum that with all sibling chrome elements (header, toolbar, footer bars).
+ */
+function measureFlexColumnExportHeight(rootEl) {
+  if (!rootEl) return null;
+  const children = [...rootEl.children];
+  const scrollEl = findScrollEl(rootEl);
+  if (!scrollEl) return null;
+  const scrollIdx = children.indexOf(scrollEl);
+
+  const contentEl = scrollEl.firstElementChild;
+  const contentH = contentEl
+    ? Math.round(contentEl.getBoundingClientRect().height)
+    : Math.round(scrollEl.getBoundingClientRect().height);
+
+  let h = 0;
+  for (let i = 0; i < scrollIdx; i++) h += children[i].offsetHeight;
+  h += contentH;
+  for (let i = scrollIdx + 1; i < children.length; i++) h += children[i].offsetHeight;
+  return Math.ceil(h);
+}
+
+function measureSplitPaneExportHeight(containerEl) {
+  const leftRoot = containerEl.querySelector('[data-guide="data-table"]')?.firstElementChild;
+  const rightRoot = containerEl.querySelector('[data-guide="gantt-chart"]')?.firstElementChild;
+  const leftH = measureFlexColumnExportHeight(leftRoot);
+  const rightH = measureFlexColumnExportHeight(rightRoot);
+  if (leftH == null || rightH == null) return null;
+  return Math.max(leftH, rightH);
+}
+
 const DEFAULT_CATEGORY_PALETTE = [
   '#6366f1', '#0ea5e9', '#10b981', '#f59e0b',
   '#ec4899', '#8b5cf6', '#14b8a6', '#f97316',
@@ -442,14 +491,28 @@ export default function App() {
   }, [enrichedTasks, settings, projectName]);
   handleExportRef.current = handleExport;
 
-  const handleExportPng = useCallback(async () => {
-    if (!chartRef.current) return;
+  const handleExportPng = useCallback(async (mode) => {
+    const target = mode === 'full' ? containerRef.current : chartRef.current;
+    if (!target) return;
     try {
       const bgColor = getComputedStyle(document.documentElement)
         .getPropertyValue('--color-bg-primary').trim() || '#0f0f12';
-      const dataUrl = await toPng(chartRef.current, { backgroundColor: bgColor });
+
+      let exportHeight = null;
+      if (mode === 'full') {
+        exportHeight = measureSplitPaneExportHeight(target);
+      } else {
+        exportHeight = measureFlexColumnExportHeight(target.firstElementChild);
+      }
+
+      const opts = { backgroundColor: bgColor };
+      if (exportHeight != null && exportHeight > 0 && exportHeight < target.offsetHeight) {
+        opts.height = exportHeight;
+      }
+
+      const dataUrl = await toPng(target, opts);
       const link = document.createElement('a');
-      link.download = 'GanttGen_Chart.png';
+      link.download = mode === 'full' ? 'GanttGen_Full.png' : 'GanttGen_Chart.png';
       link.href = dataUrl;
       link.click();
     } catch (err) {

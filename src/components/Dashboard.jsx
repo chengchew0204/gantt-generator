@@ -18,6 +18,7 @@ import {
   BookOpen,
   Undo2,
   Redo2,
+  ChevronDown,
 } from 'lucide-react';
 import ViewOptions from './ViewOptions';
 
@@ -124,7 +125,7 @@ export default function Dashboard({
             <ActionButton icon={FileDown} label="Download Template" onClick={onDownloadTemplate} />
             <ActionButton icon={Download} label="Save to Excel" onClick={onExport} primary />
           </div>
-          <ActionButton icon={Image} label="Export PNG" onClick={onExportPng} guideAttr="btn-export-png" />
+          <PngExportButton onExportPng={onExportPng} />
 
           <Separator />
 
@@ -228,6 +229,72 @@ function EditableProjectName({ value, onChange }) {
         {value || 'Untitled Project'}
       </span>
       <Pencil size={11} className="opacity-0 group-hover:opacity-60 transition-opacity" style={{ color: 'var(--color-text-muted)' }} />
+    </button>
+  );
+}
+
+function PngExportButton({ onExportPng }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e) => {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  const handleSelect = (mode) => {
+    setOpen(false);
+    onExportPng(mode);
+  };
+
+  return (
+    <div className="relative" ref={ref} data-guide="btn-export-png">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer"
+        style={{
+          backgroundColor: 'var(--color-bg-tertiary)',
+          color: 'var(--color-text-secondary)',
+          border: '1px solid var(--color-border)',
+        }}
+        onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)'; }}
+        onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'var(--color-bg-tertiary)'; }}
+        title="Export PNG"
+      >
+        <Image size={14} />
+        <span className="hidden sm:inline">Export PNG</span>
+        <ChevronDown size={10} style={{ marginLeft: 2, opacity: 0.6 }} />
+      </button>
+      {open && (
+        <div
+          className="absolute right-0 top-full mt-1 z-50 rounded-lg shadow-xl py-1 min-w-[180px]"
+          style={{
+            backgroundColor: 'var(--color-bg-secondary)',
+            border: '1px solid var(--color-border)',
+          }}
+        >
+          <DropdownItem label="Gantt Chart Only" onClick={() => handleSelect('chart')} />
+          <DropdownItem label="Include Headers" onClick={() => handleSelect('full')} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DropdownItem({ label, onClick }) {
+  return (
+    <button
+      onClick={onClick}
+      className="w-full text-left px-3 py-1.5 text-xs cursor-pointer transition-colors"
+      style={{ color: 'var(--color-text-secondary)' }}
+      onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)'; }}
+      onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; }}
+    >
+      {label}
     </button>
   );
 }
