@@ -103,13 +103,13 @@ const ALL_COLUMNS = [
 ];
 
 const DEFAULT_VISIBLE = new Set([
-  'id', 'name', 'duration', 'startDate', 'endDate', 'progress', 'status',
+  'id', 'name', 'duration', 'startDate', 'endDate', 'progress', 'status', 'owner', 'category',
 ]);
 
 const DEFAULT_VIEW_OPTIONS = {
   showCriticalPath: false,
   showSlack: false,
-  showDependencies: true,
+  showDependencies: false,
   showTodayLine: true,
   showBaseline: true,
   skipWeekends: true,
