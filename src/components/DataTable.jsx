@@ -22,25 +22,32 @@ const STATUS_OPTIONS = [
   'Pending',
 ];
 
+const HEADER_CHAR_PX = 6.5;
+const HEADER_PAD = 21;
+
+function labelWidth(label) {
+  return Math.ceil(String(label).length * HEADER_CHAR_PX + HEADER_PAD);
+}
+
 const DEFAULT_COL_WIDTHS = {
   id: 32,
-  name: 140,
-  dependency: 70,
-  category: 70,
-  startDate: 88,
-  endDate: 88,
-  duration: 56,
-  progress: 80,
-  status: 76,
-  owner: 70,
-  remarks: 80,
-  baselineStart: 88,
-  baselineEnd: 88,
-  parentId: 56,
+  name: 120,
+  dependency: labelWidth('Dependency'),
+  category: labelWidth('Category'),
+  startDate: labelWidth('Start Date'),
+  endDate: labelWidth('End Date'),
+  duration: labelWidth('Duration'),
+  progress: labelWidth('Progress (%)'),
+  status: labelWidth('Status'),
+  owner: labelWidth('Owner') + 12,
+  remarks: labelWidth('Remarks'),
+  baselineStart: labelWidth('Baseline Start'),
+  baselineEnd: labelWidth('Baseline End'),
+  parentId: labelWidth('Parent ID'),
 };
 
 function getColW(widths, key) {
-  return widths[key] ?? DEFAULT_COL_WIDTHS[key] ?? 70;
+  return widths[key] ?? DEFAULT_COL_WIDTHS[key] ?? 60;
 }
 
 export default function DataTable({
@@ -345,7 +352,7 @@ function ResizableHeaderCell({ col, width, onResizeStart }) {
       className="flex-shrink-0 relative flex items-center"
       style={{ width, maxWidth: width }}
     >
-      <span className="px-2 truncate flex-1">{col.label}</span>
+      <span className="px-2 truncate flex-1 min-w-0" title={col.label}>{col.label}</span>
       <div
         onMouseDown={handleMouseDown}
         className="absolute right-0 top-0 h-full w-[5px] cursor-col-resize z-10"
