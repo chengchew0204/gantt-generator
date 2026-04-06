@@ -14,6 +14,9 @@ const ZOOM_MIN = 25;
 const ZOOM_MAX = 200;
 const ZOOM_STEP = 10;
 const BASE_UNIT_AT_100 = 32;
+// Extra right-side pixels reserved so task name labels that appear after
+// the last bar are not clipped by the SVG boundary.
+const LABEL_RIGHT_PADDING = 300;
 
 function toBool(v) {
   if (typeof v === 'boolean') return v;
@@ -180,7 +183,7 @@ export default function GanttChart({ tasks, allTasks, viewOptions = {}, scrollTo
   const dataWidth = totalDays * unitWidth;
   const bodyHeight = tasks.length * ROW_HEIGHT;
   const containerWidth = scrollRef.current?.clientWidth || 0;
-  const chartWidth = Math.max(dataWidth, containerWidth, 600);
+  const chartWidth = Math.max(dataWidth + LABEL_RIGHT_PADDING, containerWidth, 600);
   const toolbarH = show.scaleButtons ? TOOLBAR_HEIGHT : 0;
   const timelineH = HEADER_HEIGHT - TOOLBAR_HEIGHT;
 

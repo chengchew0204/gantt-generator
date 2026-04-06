@@ -11,6 +11,9 @@ node_modules
 dist-ssr
 *.local
 
+obsidian/
+.cursor/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
