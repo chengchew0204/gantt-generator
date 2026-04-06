@@ -103,7 +103,7 @@ const ALL_COLUMNS = [
 ];
 
 const DEFAULT_VISIBLE = new Set([
-  'id', 'name', 'duration', 'startDate', 'endDate', 'progress', 'status', 'owner', 'category',
+  'id', 'name', 'duration', 'startDate', 'endDate', 'progress', 'status', 'owner',
 ]);
 
 const DEFAULT_VIEW_OPTIONS = {

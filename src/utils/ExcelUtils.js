@@ -46,7 +46,7 @@ const SETTINGS_FIELDS = [
   { key: 'showWeekLabels', label: 'Show Week Labels', defaultValue: 'false' },
   { key: 'showMonthLabels', label: 'Show Month Labels', defaultValue: 'true' },
   { key: 'showDayLabels', label: 'Show Day Labels', defaultValue: 'true' },
-  { key: 'visibleColumns', label: 'Visible Columns', defaultValue: 'id,name,duration,startDate,endDate,progress,status,owner,category' },
+  { key: 'visibleColumns', label: 'Visible Columns', defaultValue: 'id,name,duration,startDate,endDate,progress,status,owner' },
   { key: 'categoryColors', label: 'Category Colors', defaultValue: '{}' },
 ];
 
