@@ -22,7 +22,7 @@ const STATUS_OPTIONS = [
   'Pending',
 ];
 
-const HEADER_CHAR_PX = 6.5;
+const HEADER_CHAR_PX = 7.0;
 const HEADER_PAD = 21;
 
 function labelWidth(label) {
@@ -221,7 +221,7 @@ export default function DataTable({
 
   if (tasks.length === 0 && (!allTasks || allTasks.length === 0)) {
     return (
-      <div className="flex flex-col h-full">
+      <div className="flex flex-col h-full relative">
         <div className="flex-1 flex flex-col items-center justify-center gap-3 px-6">
           <div
             className="flex items-center justify-center w-12 h-12 rounded-xl"
@@ -229,14 +229,14 @@ export default function DataTable({
           >
             <Table2 size={22} style={{ color: 'var(--color-accent)' }} />
           </div>
-          <p className="text-sm font-medium" style={{ color: 'var(--color-text-secondary)' }}>
+          <p className="text-[15px] font-medium" style={{ color: 'var(--color-text-secondary)' }}>
             No tasks loaded
           </p>
-          <p className="text-xs text-center max-w-[200px]" style={{ color: 'var(--color-text-muted)' }}>
+          <p className="text-[13px] text-center max-w-[200px]" style={{ color: 'var(--color-text-muted)' }}>
             Import an Excel file or download a template to get started.
           </p>
         </div>
-        <AddRowBar onAddTask={onAddTask} />
+        <AddRowPill onAddTask={onAddTask} />
       </div>
     );
   }
@@ -244,7 +244,7 @@ export default function DataTable({
   const totalMinWidth = 6 + 32 + cols.reduce((sum, c) => sum + getColW(colWidths, c.key), 0);
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full relative">
       {/* Header */}
       <div
         className="flex-shrink-0 relative"
@@ -257,7 +257,7 @@ export default function DataTable({
         {/* Column labels — clipped so horizontal-scroll translation stays within bounds */}
         <div className="absolute inset-0 overflow-hidden" style={{ right: 32 }}>
           <div
-            className="flex items-center text-xs font-medium whitespace-nowrap h-full"
+            className="flex items-center text-[13px] font-medium whitespace-nowrap h-full"
             style={{ minWidth: totalMinWidth, color: 'var(--color-text-muted)', transform: `translateX(${-hScrollLeft}px)` }}
           >
             <div className="w-6 flex-shrink-0 px-1" />
@@ -335,7 +335,7 @@ export default function DataTable({
           )}
         </div>
       </div>
-      <AddRowBar onAddTask={onAddTask} />
+      <AddRowPill onAddTask={onAddTask} />
     </div>
   );
 }
@@ -562,7 +562,7 @@ function EditableCell({ task, col, isParent, onUpdateTask, selected, datePickFie
   if (col.key === 'id') {
     return (
       <span
-        className="block px-2 tabular-nums text-xs truncate"
+        className="block px-2 tabular-nums text-[13px] truncate"
         style={{ color: 'var(--color-text-muted)', fontWeight: isParent ? 700 : 400, lineHeight: `${ROW_HEIGHT}px` }}
       >
         {value}
@@ -582,7 +582,7 @@ function EditableCell({ task, col, isParent, onUpdateTask, selected, datePickFie
     return (
       <button
         onClick={handleStartEditing}
-        className="block w-full text-left px-2 text-xs cursor-text truncate"
+        className="block w-full text-left px-2 text-[13px] cursor-text truncate"
         style={{
           color: value ? 'var(--color-text-primary)' : 'var(--color-text-muted)',
           fontWeight: col.key === 'name' && isParent ? 700 : col.key === 'name' ? 500 : 400,
@@ -608,7 +608,7 @@ function EditableCell({ task, col, isParent, onUpdateTask, selected, datePickFie
         defaultValue={value || ''}
         onBlur={(e) => commitAndStop(e.target.value || null, false)}
         onKeyDown={(e) => handleKeyDown(e, () => e.target.value || null)}
-        className="w-full px-2 text-xs outline-none"
+        className="w-full px-2 text-[13px] outline-none"
         style={{
           height: ROW_HEIGHT - 2,
           backgroundColor: 'var(--color-bg-tertiary)',
@@ -627,7 +627,7 @@ function EditableCell({ task, col, isParent, onUpdateTask, selected, datePickFie
       defaultValue={value ?? ''}
       onBlur={(e) => commitAndStop(e.target.value)}
       onKeyDown={(e) => handleKeyDown(e, () => e.target.value)}
-      className="w-full px-2 text-xs outline-none"
+      className="w-full px-2 text-[13px] outline-none"
       style={{
         height: ROW_HEIGHT - 2,
         backgroundColor: 'var(--color-bg-tertiary)',
@@ -643,7 +643,7 @@ function ReadOnlyDisplay({ col, value, isParent }) {
   const pct = col.key === 'progress' ? Math.min(100, Math.max(0, value || 0)) : null;
   return (
     <span
-      className="block px-2 tabular-nums text-xs truncate"
+      className="block px-2 tabular-nums text-[13px] truncate"
       style={{
         color: 'var(--color-text-secondary)',
         fontWeight: isParent ? 700 : 400,
@@ -660,7 +660,7 @@ function StatusSelect({ value, onChange }) {
     <select
       value={value || ''}
       onChange={(e) => onChange(e.target.value)}
-      className="w-full text-[10px] outline-none cursor-pointer appearance-none truncate"
+      className="w-full text-[11px] outline-none cursor-pointer appearance-none truncate"
       style={{
         height: 20,
         padding: '0 4px',
@@ -691,7 +691,7 @@ function ProgressBar({ value }) {
           }}
         />
       </div>
-      <span className="tabular-nums text-xs" style={{ color: 'var(--color-text-muted)' }}>{pct}%</span>
+      <span className="tabular-nums text-[13px]" style={{ color: 'var(--color-text-muted)' }}>{pct}%</span>
     </div>
   );
 }
@@ -702,13 +702,13 @@ function ColumnPicker({ columns, visibleColumns, onToggle }) {
       className="absolute right-0 top-6 z-50 rounded-lg shadow-lg py-1 min-w-[160px]"
       style={{ backgroundColor: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
     >
-      <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--color-text-muted)' }}>
+      <div className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--color-text-muted)' }}>
         Columns
       </div>
       {columns.map((col) => (
         <label
           key={col.key}
-          className="flex items-center gap-2 px-3 py-1 cursor-pointer text-xs transition-colors"
+          className="flex items-center gap-2 px-3 py-1 cursor-pointer text-[13px] transition-colors"
           style={{ color: 'var(--color-text-secondary)' }}
           onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)')}
           onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
@@ -721,19 +721,25 @@ function ColumnPicker({ columns, visibleColumns, onToggle }) {
   );
 }
 
-function AddRowBar({ onAddTask }) {
+function AddRowPill({ onAddTask }) {
   return (
-    <div data-export-exclude className="flex-shrink-0 px-3 py-2" style={{ borderTop: '1px solid var(--color-border-subtle)' }}>
-      <button
-        onClick={onAddTask}
-        className="flex items-center gap-1.5 px-2 py-1 rounded text-xs font-medium cursor-pointer transition-colors"
-        style={{ color: 'var(--color-text-muted)', backgroundColor: 'transparent' }}
-        onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)'; e.currentTarget.style.color = 'var(--color-accent)'; }}
-        onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = 'var(--color-text-muted)'; }}
-      >
-        <Plus size={12} />
-        Add task
-      </button>
-    </div>
+    <button
+      data-export-exclude
+      onClick={onAddTask}
+      className="absolute flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[13px] font-medium cursor-pointer transition-colors shadow-md"
+      style={{
+        left: 12,
+        bottom: 12,
+        zIndex: 20,
+        color: 'var(--color-text-muted)',
+        backgroundColor: 'var(--color-bg-secondary)',
+        border: '1px solid var(--color-border)',
+      }}
+      onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--color-accent-muted)'; e.currentTarget.style.color = 'var(--color-accent)'; e.currentTarget.style.borderColor = 'var(--color-accent)'; }}
+      onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'var(--color-bg-secondary)'; e.currentTarget.style.color = 'var(--color-text-muted)'; e.currentTarget.style.borderColor = 'var(--color-border)'; }}
+    >
+      <Plus size={12} />
+      Add task
+    </button>
   );
 }

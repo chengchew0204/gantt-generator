@@ -45,6 +45,7 @@ export default function GanttChart({ tasks, allTasks, viewOptions = {}, scrollTo
     weekLabels: toBool(viewOptions.showWeekLabels ?? false),
     monthLabels: toBool(viewOptions.showMonthLabels ?? true),
     dayLabels: toBool(viewOptions.showDayLabels ?? true),
+    taskNames: toBool(viewOptions.showTaskNames ?? true),
   };
 
   const applyZoom = useCallback((pct) => {
@@ -226,8 +227,8 @@ export default function GanttChart({ tasks, allTasks, viewOptions = {}, scrollTo
         <div className="flex items-center justify-center w-12 h-12 rounded-xl" style={{ backgroundColor: 'var(--color-accent-muted)' }}>
           <BarChart3 size={22} style={{ color: 'var(--color-accent)' }} />
         </div>
-        <p className="text-sm font-medium" style={{ color: 'var(--color-text-secondary)' }}>No chart data</p>
-        <p className="text-xs text-center max-w-[200px]" style={{ color: 'var(--color-text-muted)' }}>Import tasks to render the Gantt chart.</p>
+        <p className="text-[16px] font-medium" style={{ color: 'var(--color-text-secondary)' }}>No chart data</p>
+        <p className="text-[14px] text-center max-w-[200px]" style={{ color: 'var(--color-text-muted)' }}>Import tasks to render the Gantt chart.</p>
       </div>
     );
   }
@@ -261,13 +262,13 @@ export default function GanttChart({ tasks, allTasks, viewOptions = {}, scrollTo
               className="tabular-nums text-center font-medium bg-transparent outline-none border-b"
               style={{
                 width: 38,
-                fontSize: 10,
+                fontSize: 12,
                 color: 'var(--color-text-secondary)',
                 borderColor: 'var(--color-border)',
                 MozAppearance: 'textfield',
               }}
             />
-            <span className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>%</span>
+            <span className="text-[12px]" style={{ color: 'var(--color-text-muted)' }}>%</span>
             <ZoomButton icon={ZoomIn} onClick={() => handleZoomStep(1)} disabled={zoomPct >= ZOOM_MAX} />
           </div>
         </div>
@@ -364,11 +365,11 @@ export default function GanttChart({ tasks, allTasks, viewOptions = {}, scrollTo
                 )}
 
                 {task.isParent ? (
-                  <SummaryBar task={task} y={y} minDate={minDate} unitWidth={unitWidth} />
+                  <SummaryBar task={task} y={y} minDate={minDate} unitWidth={unitWidth} showTaskNames={show.taskNames} />
                 ) : task.duration === 0 ? (
-                  <MilestoneDiamond task={task} y={y} minDate={minDate} unitWidth={unitWidth} showCritical={show.criticalPath} onUpdateTaskFields={onUpdateTaskFields} selected={String(task.id) === String(selectedTaskId)} onSelect={onSelectTask} categoryColors={categoryColors} onBeginDrag={onBeginDrag} onEndDrag={onEndDrag} />
+                  <MilestoneDiamond task={task} y={y} minDate={minDate} unitWidth={unitWidth} showCritical={show.criticalPath} onUpdateTaskFields={onUpdateTaskFields} selected={String(task.id) === String(selectedTaskId)} onSelect={onSelectTask} categoryColors={categoryColors} onBeginDrag={onBeginDrag} onEndDrag={onEndDrag} showTaskNames={show.taskNames} />
                 ) : (
-                  <TaskBar task={task} y={y} minDate={minDate} unitWidth={unitWidth} showCritical={show.criticalPath} showSlack={show.slack} onUpdateTaskFields={onUpdateTaskFields} selected={String(task.id) === String(selectedTaskId)} onSelect={onSelectTask} categoryColors={categoryColors} onBeginDrag={onBeginDrag} onEndDrag={onEndDrag} />
+                  <TaskBar task={task} y={y} minDate={minDate} unitWidth={unitWidth} showCritical={show.criticalPath} showSlack={show.slack} onUpdateTaskFields={onUpdateTaskFields} selected={String(task.id) === String(selectedTaskId)} onSelect={onSelectTask} categoryColors={categoryColors} onBeginDrag={onBeginDrag} onEndDrag={onEndDrag} showTaskNames={show.taskNames} />
                 )}
               </g>
             );
@@ -393,7 +394,7 @@ export default function GanttChart({ tasks, allTasks, viewOptions = {}, scrollTo
 function ScaleButton({ active, onClick, icon: Icon, label }) {
   return (
     <button onClick={onClick}
-      className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium cursor-pointer transition-colors"
+      className="flex items-center gap-1 px-2 py-0.5 rounded text-[12px] font-medium cursor-pointer transition-colors"
       style={{ backgroundColor: active ? 'var(--color-accent-muted)' : 'transparent', color: active ? 'var(--color-accent)' : 'var(--color-text-muted)' }}>
       <Icon size={11} />{label}
     </button>
@@ -429,7 +430,7 @@ function MonthLabels({ minDate, totalDays, unitWidth, chartWidth, height, scale 
         const showYear = d.getMonth() === 0 || i === 0;
         const monthText = showYear ? `${monthName} ${d.getFullYear()}` : monthName;
         labels.push(
-          <text key={i} x={i * unitWidth + 3} y={height - 3} fill="var(--color-text-muted)" fontSize={9} fontWeight={600}>{monthText}</text>,
+          <text key={i} x={i * unitWidth + 3} y={height - 3} fill="var(--color-text-muted)" fontSize={11} fontWeight={600}>{monthText}</text>,
         );
       }
     }
@@ -451,7 +452,7 @@ function MonthLabels({ minDate, totalDays, unitWidth, chartWidth, height, scale 
           const showYear = weekStart.getMonth() === 0 || weekIndex === 0;
           const monthText = showYear ? `${monthName} ${weekStart.getFullYear()}` : monthName;
           labels.push(
-            <text key={weekIndex} x={Math.max(x, 0) + 3} y={height - 3} fill="var(--color-text-muted)" fontSize={9} fontWeight={600}>{monthText}</text>,
+            <text key={weekIndex} x={Math.max(x, 0) + 3} y={height - 3} fill="var(--color-text-muted)" fontSize={11} fontWeight={600}>{monthText}</text>,
           );
         }
       }
@@ -502,7 +503,7 @@ function DayLabels({ minDate, totalDays, unitWidth, chartWidth, height, scale })
               x={x + unitWidth / 2}
               y={height - 3}
               fill={isWeekend ? 'var(--color-text-muted)' : 'var(--color-text-secondary)'}
-              fontSize={compactLabel ? 7 : 8}
+              fontSize={compactLabel ? 9 : 10}
               fontWeight={isMonthStart ? 600 : 500}
               textAnchor="middle"
               opacity={isWeekend ? 0.5 : 0.8}
@@ -524,7 +525,7 @@ function DayLabels({ minDate, totalDays, unitWidth, chartWidth, height, scale })
       const x = dayOffset * unitWidth;
       if (x >= -unitWidth * 7 && x < totalW + unitWidth * 7) {
         labels.push(
-          <text key={weekIndex} x={x + 3} y={height - 3} fill="var(--color-text-secondary)" fontSize={7} opacity={0.8}>
+          <text key={weekIndex} x={x + 3} y={height - 3} fill="var(--color-text-secondary)" fontSize={9} opacity={0.8}>
             {weekStart.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' })}
           </text>,
         );
@@ -567,7 +568,7 @@ function WeekLabels({ minDate, totalDays, unitWidth, chartWidth, height }) {
         <g key={i}>
           <rect x={x} y={0} width={weekWidth} height={height} fill="transparent" />
           <line x1={x} y1={0} x2={x} y2={height} stroke="var(--color-border-subtle)" strokeWidth={1} opacity={0.5} />
-          <text x={x + 4} y={height - 4} fill="var(--color-text-muted)" fontSize={8} fontWeight={500}>
+          <text x={x + 4} y={height - 4} fill="var(--color-text-muted)" fontSize={10} fontWeight={500}>
             W{weekNum}
           </text>
         </g>,
@@ -641,7 +642,7 @@ function HoverDateHighlight({ date, minDate, unitWidth, height, label }) {
           <rect x={x + unitWidth / 2 - pillW / 2} y={2} width={pillW} height={16} rx={3}
             fill="var(--color-accent)" opacity={0.85} />
           <text x={x + unitWidth / 2} y={13} textAnchor="middle"
-            fill="#fff" fontSize={9} fontWeight={500}>
+            fill="#fff" fontSize={11} fontWeight={500}>
             {label}
           </text>
         </>
@@ -669,7 +670,7 @@ function DragPreviewBar({ dragStart, dragEnd, minDate, unitWidth, rowIndex }) {
   );
 }
 
-function TaskBar({ task, y, minDate, unitWidth, showCritical, showSlack, onUpdateTaskFields, selected, onSelect, categoryColors = {}, onBeginDrag, onEndDrag }) {
+function TaskBar({ task, y, minDate, unitWidth, showCritical, showSlack, onUpdateTaskFields, selected, onSelect, categoryColors = {}, onBeginDrag, onEndDrag, showTaskNames }) {
   if (!task.startDate || !task.endDate) return null;
   const startOffset = daysBetween(minDate, task.startDate);
   const duration = daysBetween(task.startDate, task.endDate) + 1;
@@ -789,12 +790,12 @@ function TaskBar({ task, y, minDate, unitWidth, showCritical, showSlack, onUpdat
       <rect x={middleX} y={barY} width={middleWidth} height={BAR_HEIGHT} fill="transparent" style={{ cursor: 'grab' }} onMouseDown={handleMoveStart} />
       {/* Right resize hit area */}
       <rect x={x + width - handleZone} y={barY} width={handleZone} height={BAR_HEIGHT} fill="transparent" style={{ cursor: 'e-resize' }} onMouseDown={handleResizeEndStart} />
-      <text x={x + width + 4} y={barY + BAR_HEIGHT / 2 + 3.5} fill="var(--color-text-secondary)" fontSize={9} fontWeight={500}>{task.name}</text>
+      {showTaskNames && <text x={x + width + 4} y={barY + BAR_HEIGHT / 2 + 3.5} fill="var(--color-text-secondary)" fontSize={12} fontWeight={500}>{task.name}</text>}
     </g>
   );
 }
 
-function MilestoneDiamond({ task, y, minDate, unitWidth, showCritical, onUpdateTaskFields, selected, onSelect, categoryColors = {}, onBeginDrag, onEndDrag }) {
+function MilestoneDiamond({ task, y, minDate, unitWidth, showCritical, onUpdateTaskFields, selected, onSelect, categoryColors = {}, onBeginDrag, onEndDrag, showTaskNames }) {
   if (!task.startDate) return null;
   const offset = daysBetween(minDate, task.startDate);
   const cx = offset * unitWidth + unitWidth / 2;
@@ -832,12 +833,12 @@ function MilestoneDiamond({ task, y, minDate, unitWidth, showCritical, onUpdateT
       {selected && <circle cx={cx} cy={cy} r={size + 3} fill="none" stroke={color} strokeWidth={2} opacity={0.7} />}
       <polygon points={`${cx},${cy - size} ${cx + size},${cy} ${cx},${cy + size} ${cx - size},${cy}`} fill={color} opacity={0.9} />
       <rect x={cx - size} y={cy - size} width={size * 2} height={size * 2} fill="transparent" />
-      <text x={cx + size + 4} y={cy + 3.5} fill="var(--color-text-secondary)" fontSize={9} fontWeight={500}>{task.name}</text>
+      {showTaskNames && <text x={cx + size + 4} y={cy + 3.5} fill="var(--color-text-secondary)" fontSize={12} fontWeight={500}>{task.name}</text>}
     </g>
   );
 }
 
-function SummaryBar({ task, y, minDate, unitWidth }) {
+function SummaryBar({ task, y, minDate, unitWidth, showTaskNames }) {
   if (!task.startDate || !task.endDate) return null;
   const startOffset = daysBetween(minDate, task.startDate);
   const duration = daysBetween(task.startDate, task.endDate) + 1;
@@ -850,7 +851,7 @@ function SummaryBar({ task, y, minDate, unitWidth }) {
       <rect x={x} y={barY} width={width} height={SUMMARY_HEIGHT} fill="var(--color-text-muted)" opacity={0.5} />
       <rect x={x} y={barY} width={capWidth} height={SUMMARY_HEIGHT + 4} fill="var(--color-text-muted)" opacity={0.7} />
       <rect x={x + width - capWidth} y={barY} width={capWidth} height={SUMMARY_HEIGHT + 4} fill="var(--color-text-muted)" opacity={0.7} />
-      <text x={x + width + 4} y={barY + SUMMARY_HEIGHT / 2 + 3.5} fill="var(--color-text-muted)" fontSize={9} fontWeight={700}>{task.name}</text>
+      {showTaskNames && <text x={x + width + 4} y={barY + SUMMARY_HEIGHT / 2 + 3.5} fill="var(--color-text-muted)" fontSize={12} fontWeight={700}>{task.name}</text>}
     </g>
   );
 }

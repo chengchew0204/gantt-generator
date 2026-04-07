@@ -32,6 +32,8 @@ export default function Dashboard({
   tasks,
   projectName,
   onChangeProjectName,
+  lastSavedAt,
+  isDirty,
   onImport,
   onDownloadTemplate,
   onExport,
@@ -103,10 +105,10 @@ export default function Dashboard({
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-1.5">
-            <span className="text-xs font-semibold tracking-tight" style={{ color: 'var(--color-text-muted)' }}>
+            <span className="text-[13px] font-semibold tracking-tight" style={{ color: 'var(--color-text-muted)' }}>
               GanttGen
             </span>
-            <span className="text-[9px] px-1 py-px rounded font-medium"
+            <span className="text-[10px] px-1 py-px rounded font-medium"
               style={{ backgroundColor: 'var(--color-accent-muted)', color: 'var(--color-accent)' }}>
               v1.0
             </span>
@@ -117,6 +119,7 @@ export default function Dashboard({
             <IconButton icon={Undo2} title="Undo (Ctrl+Z)" onClick={onUndo} disabled={canUndo && !canUndo()} />
             <IconButton icon={Redo2} title="Redo (Ctrl+Shift+Z)" onClick={onRedo} disabled={canRedo && !canRedo()} />
           </div>
+          <SaveTimestamp lastSavedAt={lastSavedAt} isDirty={isDirty} />
         </div>
 
         <div className="flex items-center gap-2">
@@ -204,7 +207,7 @@ function EditableProjectName({ value, onChange }) {
           if (e.key === 'Enter') commit();
           if (e.key === 'Escape') { setDraft(value); setEditing(false); }
         }}
-        className="text-sm font-semibold tracking-tight bg-transparent outline-none border-b"
+        className="text-[15px] font-semibold tracking-tight bg-transparent outline-none border-b"
         style={{
           color: 'var(--color-text-primary)',
           borderColor: 'var(--color-accent)',
@@ -223,7 +226,7 @@ function EditableProjectName({ value, onChange }) {
       title="Click to rename project"
     >
       <span
-        className="text-sm font-semibold tracking-tight"
+        className="text-[15px] font-semibold tracking-tight"
         style={{ color: value ? 'var(--color-text-primary)' : 'var(--color-text-muted)' }}
       >
         {value || 'Untitled Project'}
@@ -255,7 +258,7 @@ function PngExportButton({ onExportPng }) {
     <div className="relative" ref={ref} data-guide="btn-export-png">
       <button
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer"
+        className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[13px] font-medium transition-colors cursor-pointer"
         style={{
           backgroundColor: 'var(--color-bg-tertiary)',
           color: 'var(--color-text-secondary)',
@@ -289,7 +292,7 @@ function DropdownItem({ label, onClick }) {
   return (
     <button
       onClick={onClick}
-      className="w-full text-left px-3 py-1.5 text-xs cursor-pointer transition-colors"
+      className="w-full text-left px-3 py-1.5 text-[13px] cursor-pointer transition-colors"
       style={{ color: 'var(--color-text-secondary)' }}
       onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)'; }}
       onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; }}
@@ -314,9 +317,9 @@ function TaskInfoCard({ icon: Icon, label, task, color }) {
         <Icon size={14} style={{ color }} />
       </div>
       <div>
-        <div className="text-xs font-medium" style={{ color: 'var(--color-text-muted)' }}>{label}</div>
+        <div className="text-[13px] font-medium" style={{ color: 'var(--color-text-muted)' }}>{label}</div>
         <div
-          className="text-xs font-semibold max-w-[140px] truncate"
+          className="text-[13px] font-semibold max-w-[140px] truncate"
           style={{ color: task ? 'var(--color-text-primary)' : 'var(--color-text-muted)' }}
           title={task?.name || ''}
         >
@@ -334,7 +337,7 @@ function ActionButton({ icon: Icon, label, onClick, primary, guideAttr, disabled
       disabled={disabled}
       title={label}
       data-guide={guideAttr || undefined}
-      className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-default"
+        className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[13px] font-medium transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-default"
       style={{
         backgroundColor: primary ? 'var(--color-accent)' : 'var(--color-bg-tertiary)',
         color: primary ? '#fff' : 'var(--color-text-secondary)',
@@ -372,9 +375,47 @@ function StatCard({ icon: Icon, label, value, color }) {
         <Icon size={14} style={{ color }} />
       </div>
       <div>
-        <div className="text-xs font-medium" style={{ color: 'var(--color-text-muted)' }}>{label}</div>
-        <div className="text-sm font-semibold tabular-nums" style={{ color: 'var(--color-text-primary)' }}>{value}</div>
+        <div className="text-[13px] font-medium" style={{ color: 'var(--color-text-muted)' }}>{label}</div>
+        <div className="text-[15px] font-semibold tabular-nums" style={{ color: 'var(--color-text-primary)' }}>{value}</div>
       </div>
+    </div>
+  );
+}
+
+function formatTime(date) {
+  if (!date) return '';
+  const h = String(date.getHours()).padStart(2, '0');
+  const m = String(date.getMinutes()).padStart(2, '0');
+  const s = String(date.getSeconds()).padStart(2, '0');
+  return `${h}:${m}:${s}`;
+}
+
+function SaveTimestamp({ lastSavedAt, isDirty }) {
+  if (!lastSavedAt && !isDirty) return null;
+
+  const timeStr = lastSavedAt ? formatTime(lastSavedAt) : null;
+  const color = isDirty ? 'var(--color-warning)' : 'var(--color-success)';
+
+  return (
+    <div className="flex items-center gap-1.5 ml-1" title={
+      isDirty
+        ? lastSavedAt ? `Last saved at ${timeStr} -- unsaved changes` : 'Unsaved changes'
+        : `Saved at ${timeStr}`
+    }>
+      {isDirty && (
+        <span
+          className="block w-1.5 h-1.5 rounded-full flex-shrink-0"
+          style={{ backgroundColor: color }}
+        />
+      )}
+      {timeStr && (
+        <span
+          className="text-[11px] tabular-nums whitespace-nowrap"
+          style={{ color: isDirty ? 'var(--color-text-muted)' : color }}
+        >
+          Saved {timeStr}
+        </span>
+      )}
     </div>
   );
 }

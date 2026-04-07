@@ -1,5 +1,6 @@
 import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { toPng } from 'html-to-image';
+import { FileUp, X, AlertCircle } from 'lucide-react';
 import Dashboard from './components/Dashboard';
 import DataTable from './components/DataTable';
 import GanttChart from './components/GanttChart';
@@ -112,6 +113,7 @@ const DEFAULT_VIEW_OPTIONS = {
   showDependencies: false,
   showTodayLine: true,
   showBaseline: true,
+  showTaskNames: true,
   skipWeekends: true,
   showScaleButtons: true,
   showWeekLabels: false,
@@ -196,6 +198,12 @@ export default function App() {
   const [categoryColors, setCategoryColors] = useState({});
   const [projectName, setProjectName] = useState('');
   const [datePickField, setDatePickField] = useState(null);
+  const [lastSavedAt, setLastSavedAt] = useState(null);
+  const [isDirty, setIsDirty] = useState(false);
+  const isDirtyRef = useRef(false);
+  const [dragActive, setDragActive] = useState(false);
+  const [importError, setImportError] = useState(null);
+  const dragCounter = useRef(0);
   const containerRef = useRef(null);
   const chartRef = useRef(null);
   const viewBtnRef = useRef(null);
@@ -206,10 +214,16 @@ export default function App() {
 
   const { pushState, undo, redo, canUndo, canRedo, beginBatch, endBatch } = useUndoRedo();
 
+  const markDirty = useCallback(() => {
+    setIsDirty(true);
+    isDirtyRef.current = true;
+  }, []);
+
   const recordAndSetTasks = useCallback((updater) => {
     pushState(tasksRef.current);
     setTasks(updater);
-  }, [pushState]);
+    markDirty();
+  }, [pushState, markDirty]);
 
   const handleUndo = useCallback(() => {
     const prev = undo(tasksRef.current);
@@ -353,7 +367,8 @@ export default function App() {
     setActiveTheme(name);
     applyThemeToDOM(colors);
     setSettings((prev) => writeThemeColors({ ...prev, themeName: name }, colors));
-  }, []);
+    markDirty();
+  }, [markDirty]);
 
   const handleApplyCustomColor = useCallback((key, hex) => {
     setActiveTheme('Custom');
@@ -369,11 +384,13 @@ export default function App() {
       current[key] = hex;
       return writeThemeColors({ ...prev, themeName: 'Custom' }, current);
     });
-  }, []);
+    markDirty();
+  }, [markDirty]);
 
   const handleChangeCategoryColor = useCallback((category, hex) => {
     setCategoryColors((prev) => ({ ...prev, [category]: hex }));
-  }, []);
+    markDirty();
+  }, [markDirty]);
 
   const handleOpenTheme = useCallback(() => {
     setThemePanelOpen(true);
@@ -392,7 +409,8 @@ export default function App() {
       const next = { ...prev, [key]: !toBool(prev[key]) };
       return next;
     });
-  }, []);
+    markDirty();
+  }, [markDirty]);
 
   useEffect(() => {
     setCategoryColors((prev) => assignCategoryColors(tasks, prev));
@@ -451,7 +469,17 @@ export default function App() {
     return () => document.removeEventListener('keydown', handler);
   }, [handleUndo, handleRedo]);
 
+  useEffect(() => {
+    const handler = (e) => {
+      if (!isDirtyRef.current) return;
+      e.preventDefault();
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, []);
+
   const handleImport = useCallback(async (file) => {
+    setImportError(null);
     try {
       const result = await importExcel(file);
       setTasks(result.tasks);
@@ -470,6 +498,7 @@ export default function App() {
         showDependencies: toBool(s.showDependencies ?? true),
         showTodayLine: toBool(s.showTodayLine ?? true),
         showBaseline: toBool(s.showBaseline ?? true),
+        showTaskNames: toBool(s.showTaskNames ?? true),
         skipWeekends: toBool(s.skipWeekends ?? true),
         showScaleButtons: toBool(s.showScaleButtons ?? true),
         showWeekLabels: toBool(s.showWeekLabels ?? false),
@@ -487,14 +516,60 @@ export default function App() {
         try { restored = JSON.parse(s.categoryColors); } catch (_) { /* ignore */ }
       }
       setCategoryColors(assignCategoryColors(result.tasks, restored));
+
+      setLastSavedAt(null);
+      setIsDirty(false);
+      isDirtyRef.current = false;
     } catch (err) {
       console.error('Import failed:', err);
+      setImportError(err.message || 'Import failed. Please check the file and try again.');
     }
   }, []);
+
+  useEffect(() => {
+    if (!importError) return;
+    const timer = setTimeout(() => setImportError(null), 6000);
+    return () => clearTimeout(timer);
+  }, [importError]);
+
+  const handleDragEnter = useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounter.current += 1;
+    if (dragCounter.current === 1) setDragActive(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounter.current -= 1;
+    if (dragCounter.current <= 0) {
+      dragCounter.current = 0;
+      setDragActive(false);
+    }
+  }, []);
+
+  const handleDragOver = useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
+  }, []);
+
+  const handleDrop = useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounter.current = 0;
+    setDragActive(false);
+
+    const file = e.dataTransfer?.files?.[0];
+    if (file) handleImport(file);
+  }, [handleImport]);
 
   const handleExport = useCallback(() => {
     const filename = 'GanttGen-' + (projectName.trim() || 'Project').replace(/[^\w\s-]/g, '') + '.xlsx';
     exportExcel(enrichedTasks, settings, filename);
+    setLastSavedAt(new Date());
+    setIsDirty(false);
+    isDirtyRef.current = false;
   }, [enrichedTasks, settings, projectName]);
   handleExportRef.current = handleExport;
 
@@ -517,7 +592,10 @@ export default function App() {
         exportHeight = measureFlexColumnExportHeight(target.firstElementChild);
       }
 
-      const opts = { backgroundColor: bgColor };
+      const opts = {
+        backgroundColor: bgColor,
+        filter: (node) => !node?.hasAttribute?.('data-export-exclude'),
+      };
       if (exportHeight != null && exportHeight > 0 && exportHeight < target.offsetHeight) {
         opts.height = exportHeight;
       }
@@ -560,11 +638,22 @@ export default function App() {
   }, []);
 
   return (
-    <div className="flex flex-col h-screen" style={{ backgroundColor: 'var(--color-bg-primary)' }}>
+    <div
+      className="flex flex-col h-screen relative"
+      style={{ backgroundColor: 'var(--color-bg-primary)' }}
+      onDragEnter={handleDragEnter}
+      onDragLeave={handleDragLeave}
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
+    >
+      {dragActive && <DropOverlay />}
+      {importError && <ImportErrorToast message={importError} onDismiss={() => setImportError(null)} />}
       <Dashboard
         tasks={enrichedTasks}
         projectName={projectName}
-        onChangeProjectName={setProjectName}
+        onChangeProjectName={(v) => { setProjectName(v); markDirty(); }}
+        lastSavedAt={lastSavedAt}
+        isDirty={isDirty}
         onImport={handleImport}
         onDownloadTemplate={downloadTemplate}
         onExport={handleExport}
@@ -589,6 +678,7 @@ export default function App() {
             else next.add(key);
             return next;
           });
+          markDirty();
         }}
       />
 
@@ -613,6 +703,7 @@ export default function App() {
                 else next.add(key);
                 return next;
               });
+              markDirty();
             }}
             collapsedParents={collapsedParents}
             onToggleCollapse={handleToggleCollapse}
@@ -674,6 +765,57 @@ export default function App() {
         open={guideOpen}
         onClose={() => setGuideOpen(false)}
       />
+    </div>
+  );
+}
+
+function DropOverlay() {
+  return (
+    <div
+      className="absolute inset-0 z-[9999] flex items-center justify-center pointer-events-none"
+      style={{ backgroundColor: 'rgba(0, 0, 0, 0.55)', backdropFilter: 'blur(4px)' }}
+    >
+      <div
+        className="flex flex-col items-center gap-3 px-10 py-8 rounded-xl border-2 border-dashed"
+        style={{
+          borderColor: 'var(--color-accent)',
+          backgroundColor: 'var(--color-bg-secondary)',
+        }}
+      >
+        <FileUp size={36} style={{ color: 'var(--color-accent)' }} />
+        <span className="text-base font-semibold" style={{ color: 'var(--color-text-primary)' }}>
+          Drop Excel file to import
+        </span>
+        <span className="text-sm" style={{ color: 'var(--color-text-muted)' }}>
+          .xlsx or .xls
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function ImportErrorToast({ message, onDismiss }) {
+  return (
+    <div
+      className="absolute top-4 left-1/2 -translate-x-1/2 z-[9999] flex items-start gap-2.5 px-4 py-3 rounded-lg shadow-xl max-w-md"
+      style={{
+        backgroundColor: 'var(--color-bg-secondary)',
+        border: '1px solid var(--color-danger)',
+      }}
+    >
+      <AlertCircle size={18} className="flex-shrink-0 mt-0.5" style={{ color: 'var(--color-danger)' }} />
+      <span className="text-[13px] leading-snug" style={{ color: 'var(--color-text-primary)' }}>
+        {message}
+      </span>
+      <button
+        onClick={onDismiss}
+        className="flex-shrink-0 ml-2 p-0.5 rounded transition-colors cursor-pointer"
+        style={{ color: 'var(--color-text-muted)' }}
+        onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--color-text-primary)'; }}
+        onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--color-text-muted)'; }}
+      >
+        <X size={14} />
+      </button>
     </div>
   );
 }

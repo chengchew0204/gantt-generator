@@ -347,7 +347,7 @@ export default function GuideOverlay({ open, onClose }) {
                 <Icon size={15} style={{ color: 'var(--color-accent)' }} />
               </div>
               <h3
-                className="text-sm font-semibold"
+                className="text-[15px] font-semibold"
                 style={{ color: 'var(--color-text-primary)' }}
               >
                 {currentStep.title}
@@ -370,7 +370,7 @@ export default function GuideOverlay({ open, onClose }) {
 
           <div className="px-5 py-4">
             <p
-              className="text-xs leading-relaxed mb-3"
+              className="text-[13px] leading-relaxed mb-3"
               style={{ color: 'var(--color-text-secondary)' }}
             >
               {currentStep.description}
@@ -386,7 +386,7 @@ export default function GuideOverlay({ open, onClose }) {
                       style={{ color: 'var(--color-accent)' }}
                     />
                     <span
-                      className="text-xs leading-relaxed"
+                      className="text-[13px] leading-relaxed"
                       style={{ color: 'var(--color-text-secondary)' }}
                     >
                       {item}
@@ -418,7 +418,7 @@ export default function GuideOverlay({ open, onClose }) {
 
             <div className="flex items-center gap-3">
               <span
-                className="text-[10px] tabular-nums"
+                className="text-[11px] tabular-nums"
                 style={{ color: 'var(--color-text-muted)' }}
               >
                 {step + 1} / {totalSteps}
@@ -447,7 +447,7 @@ export default function GuideOverlay({ open, onClose }) {
 
                 <button
                   onClick={goNext}
-                  className="flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-medium cursor-pointer transition-colors"
+                  className="flex items-center gap-1 px-3 py-1.5 rounded-md text-[13px] font-medium cursor-pointer transition-colors"
                   style={{
                     backgroundColor: 'var(--color-accent)',
                     color: '#fff',

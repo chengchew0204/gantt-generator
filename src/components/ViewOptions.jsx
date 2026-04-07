@@ -6,6 +6,7 @@ const CHART_TOGGLES = [
   { key: 'showDependencies', label: 'Dependency Arrows' },
   { key: 'showTodayLine', label: 'Today Line' },
   { key: 'showBaseline', label: 'Baseline Bars' },
+  { key: 'showTaskNames', label: 'Task Names on Chart' },
   { key: 'skipWeekends', label: 'Skip Weekends (working days)' },
   { key: 'showScaleButtons', label: 'Day/Week Scale Buttons' },
   { key: 'showWeekLabels', label: 'Week Number Labels (W1, W2...)' },
@@ -78,7 +79,7 @@ export default function ViewOptions({
 function SectionLabel({ children }) {
   return (
     <div
-      className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider"
+      className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider"
       style={{ color: 'var(--color-text-muted)' }}
     >
       {children}
@@ -89,7 +90,7 @@ function SectionLabel({ children }) {
 function ToggleRow({ label, checked, onChange }) {
   return (
     <label
-      className="flex items-center gap-2 px-3 py-1.5 cursor-pointer text-xs transition-colors"
+      className="flex items-center gap-2 px-3 py-1.5 cursor-pointer text-[13px] transition-colors"
       style={{ color: 'var(--color-text-secondary)' }}
       onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)')}
       onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}

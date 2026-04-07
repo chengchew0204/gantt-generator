@@ -96,7 +96,7 @@ export default function ThemePanel({ open, onClose, activeTheme, onApplyPreset, 
             borderBottom: '1px solid var(--color-border)',
           }}
         >
-          <h2 className="text-sm font-semibold" style={{ color: 'var(--color-text-primary)' }}>
+          <h2 className="text-[15px] font-semibold" style={{ color: 'var(--color-text-primary)' }}>
             Theme
           </h2>
           <button
@@ -165,7 +165,7 @@ export default function ThemePanel({ open, onClose, activeTheme, onApplyPreset, 
 function SectionLabel({ children }) {
   return (
     <div
-      className="text-[10px] font-semibold uppercase tracking-wider mb-2"
+      className="text-[11px] font-semibold uppercase tracking-wider mb-2"
       style={{ color: 'var(--color-text-muted)' }}
     >
       {children}
@@ -191,7 +191,7 @@ function PresetCard({ name, colors, active, onSelect }) {
         ))}
       </div>
       <span
-        className="text-xs font-medium flex-1"
+        className="text-[13px] font-medium flex-1"
         style={{ color: active ? 'var(--color-accent)' : 'var(--color-text-secondary)' }}
       >
         {name}
@@ -205,11 +205,11 @@ function ColorRow({ label, value, onChange }) {
   const normalizedValue = normalizeToHex(value);
   return (
     <label className="flex items-center justify-between gap-2">
-      <span className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>
+      <span className="text-[13px]" style={{ color: 'var(--color-text-secondary)' }}>
         {label}
       </span>
       <div className="flex items-center gap-1.5">
-        <span className="text-[10px] tabular-nums" style={{ color: 'var(--color-text-muted)' }}>
+        <span className="text-[11px] tabular-nums" style={{ color: 'var(--color-text-muted)' }}>
           {normalizedValue}
         </span>
         <input

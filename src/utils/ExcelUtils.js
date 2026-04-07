@@ -71,13 +71,51 @@ export function downloadTemplate() {
   XLSX.writeFile(wb, 'GanttGen_Template.xlsx');
 }
 
+const REQUIRED_HEADERS = ['Task ID', 'Task Name'];
+
+const ACCEPTED_EXTENSIONS = ['.xlsx', '.xls'];
+
+function validateFileType(file) {
+  const name = (file.name || '').toLowerCase();
+  const ext = name.slice(name.lastIndexOf('.'));
+  if (!ACCEPTED_EXTENSIONS.includes(ext)) {
+    throw new Error(
+      `Invalid file type "${ext}". Please import an Excel file (.xlsx or .xls).`,
+    );
+  }
+}
+
+function validateTaskHeaders(wb) {
+  const sheetName = wb.SheetNames.find((n) => n.toLowerCase() === 'tasks');
+  if (!sheetName) {
+    throw new Error(
+      'The Excel file has no "Tasks" sheet. Please use the GanttGen template.',
+    );
+  }
+  const sheet = wb.Sheets[sheetName];
+  const rows = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+  const headerRow = rows[0] || [];
+  const headers = headerRow.map((h) => String(h).trim());
+
+  const missing = REQUIRED_HEADERS.filter((h) => !headers.includes(h));
+  if (missing.length > 0) {
+    throw new Error(
+      `Missing required columns: ${missing.join(', ')}. Please use the GanttGen template.`,
+    );
+  }
+}
+
 /**
  * @param {File} file
  * @returns {Promise<{ tasks: object[], settings: object }>}
  */
 export async function importExcel(file) {
+  validateFileType(file);
+
   const data = await file.arrayBuffer();
   const wb = XLSX.read(data, { type: 'array', cellDates: true });
+
+  validateTaskHeaders(wb);
 
   const tasks = parseTasksSheet(wb);
   const settings = parseSettingsSheet(wb);
