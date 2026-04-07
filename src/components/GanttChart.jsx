@@ -338,6 +338,9 @@ export default function GanttChart({ tasks, allTasks, viewOptions = {}, scrollTo
             <marker id="arrowhead" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto">
               <path d="M0,0 L6,2.5 L0,5 Z" fill="var(--color-text-muted)" opacity="0.6" />
             </marker>
+            <pattern id="slack-hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+              <line x1="0" y1="0" x2="0" y2="6" stroke="var(--color-warning)" strokeWidth="2" />
+            </pattern>
           </defs>
 
           <BodyGrid minDate={minDate} totalDays={totalDays} unitWidth={unitWidth} bodyHeight={bodyHeight} chartWidth={chartWidth} scale={scale} />
@@ -642,7 +645,7 @@ function HoverDateHighlight({ date, minDate, unitWidth, height, label }) {
           <rect x={x + unitWidth / 2 - pillW / 2} y={2} width={pillW} height={16} rx={3}
             fill="var(--color-accent)" opacity={0.85} />
           <text x={x + unitWidth / 2} y={13} textAnchor="middle"
-            fill="#fff" fontSize={11} fontWeight={500}>
+            fill="var(--color-on-accent)" fontSize={11} fontWeight={500}>
             {label}
           </text>
         </>
@@ -763,34 +766,45 @@ function TaskBar({ task, y, minDate, unitWidth, showCritical, showSlack, onUpdat
   const handleZone = Math.min(resizeWidth, width / 3);
   const middleX = x + handleZone;
   const middleWidth = Math.max(width - handleZone * 2, 2);
+  const clampedSlackW = Math.min(slackWidth, 400);
+  const nameX = slackWidth > 0 ? x + width + clampedSlackW + 4 : x + width + 4;
 
   return (
     <g onClick={(e) => e.stopPropagation()}>
-      {/* Row highlight */}
       {selected && (
         <rect x={0} y={y} width={9999} height={ROW_HEIGHT} fill={barColor} opacity={0.06} />
       )}
-      {slackWidth > 0 && <rect x={x + width} y={barY + 5} width={Math.min(slackWidth, 200)} height={6} rx={2} fill="var(--color-warning)" opacity={0.2} />}
-      {/* Background bar */}
+      {slackWidth > 0 && (
+        <g>
+          <rect x={x + width + 1} y={barY + 1} width={clampedSlackW} height={BAR_HEIGHT - 2} rx={2}
+            fill="var(--color-warning)" opacity={0.13} />
+          <rect x={x + width + 1} y={barY + 1} width={clampedSlackW} height={BAR_HEIGHT - 2} rx={2}
+            fill="url(#slack-hatch)" opacity={0.45} />
+        </g>
+      )}
       <rect x={x} y={barY} width={width} height={BAR_HEIGHT} rx={3} fill={barColor} opacity={0.25} />
-      {/* Progress fill */}
       {progressWidth > 0 && <rect x={x} y={barY} width={progressWidth} height={BAR_HEIGHT} rx={3} fill={barColor} opacity={0.85} />}
-      {/* Selection outline (on top of bar, below handles) */}
       {selected && (
         <rect x={x - 2} y={barY - 2} width={width + 4} height={BAR_HEIGHT + 4}
           rx={4} fill="none" stroke={barColor} strokeWidth={2} opacity={0.8} />
       )}
-      {/* Left resize handle -- visible grip line */}
       <rect x={x} y={barY + 3} width={2} height={BAR_HEIGHT - 6} rx={1} fill={barColor} opacity={selected ? 0.9 : 0.5} />
-      {/* Right resize handle -- visible grip line */}
       <rect x={x + width - 2} y={barY + 3} width={2} height={BAR_HEIGHT - 6} rx={1} fill={barColor} opacity={selected ? 0.9 : 0.5} />
-      {/* Left resize hit area */}
       <rect x={x} y={barY} width={handleZone} height={BAR_HEIGHT} fill="transparent" style={{ cursor: 'w-resize' }} onMouseDown={handleResizeStartStart} />
-      {/* Middle drag-to-move hit area */}
       <rect x={middleX} y={barY} width={middleWidth} height={BAR_HEIGHT} fill="transparent" style={{ cursor: 'grab' }} onMouseDown={handleMoveStart} />
-      {/* Right resize hit area */}
       <rect x={x + width - handleZone} y={barY} width={handleZone} height={BAR_HEIGHT} fill="transparent" style={{ cursor: 'e-resize' }} onMouseDown={handleResizeEndStart} />
-      {showTaskNames && <text x={x + width + 4} y={barY + BAR_HEIGHT / 2 + 3.5} fill="var(--color-text-secondary)" fontSize={12} fontWeight={500}>{task.name}</text>}
+      {slackWidth > 0 && (
+        <text x={x + width + clampedSlackW / 2} y={barY + BAR_HEIGHT / 2 + 3}
+          textAnchor="middle" fill="var(--color-warning)" fontSize={9} fontWeight={600} opacity={0.8}>
+          {task.totalFloat}d
+        </text>
+      )}
+      {showTaskNames && (
+        <text x={nameX} y={barY + BAR_HEIGHT / 2 + 3.5}
+          fill="var(--color-text-secondary)" fontSize={12} fontWeight={500}>
+          {task.name}
+        </text>
+      )}
     </g>
   );
 }

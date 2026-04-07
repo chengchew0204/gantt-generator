@@ -364,11 +364,26 @@ function ActionButton({ icon: Icon, label, onClick, primary, guideAttr, disabled
         className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[13px] font-medium transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-default"
       style={{
         backgroundColor: primary ? 'var(--color-accent)' : 'var(--color-bg-tertiary)',
-        color: primary ? '#fff' : 'var(--color-text-secondary)',
+        color: primary ? 'var(--color-on-accent)' : 'var(--color-text-secondary)',
         border: primary ? 'none' : '1px solid var(--color-border)',
       }}
-      onMouseEnter={(e) => { if (!primary && !disabled) e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)'; }}
-      onMouseLeave={(e) => { if (!primary) e.currentTarget.style.backgroundColor = 'var(--color-bg-tertiary)'; }}
+      onMouseEnter={(e) => {
+        if (disabled) return;
+        if (primary) {
+          e.currentTarget.style.backgroundColor = 'var(--color-accent-hover)';
+          e.currentTarget.style.color = 'var(--color-on-accent-hover)';
+        } else {
+          e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)';
+        }
+      }}
+      onMouseLeave={(e) => {
+        if (primary) {
+          e.currentTarget.style.backgroundColor = 'var(--color-accent)';
+          e.currentTarget.style.color = 'var(--color-on-accent)';
+        } else {
+          e.currentTarget.style.backgroundColor = 'var(--color-bg-tertiary)';
+        }
+      }}
     >
       <Icon size={14} />
       <span className="hidden sm:inline">{label}</span>

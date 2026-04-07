@@ -33,7 +33,7 @@ GanttGen is built for project managers and engineers who need a capable scheduli
 - Baseline bars displayed as a thin strip behind the actual bar
 
 **Theming**
-- Three built-in presets: Linear Dark, Notion Light, Classic Tremor
+- Built-in presets: Linear Dark, Notion Light, Classic Tremor, Gray, Black & White
 - Custom color builder for background, text, accent, and status colors
 - Per-category bar colors
 - All theme settings saved to the Excel file

@@ -22,6 +22,9 @@ const STATUS_OPTIONS = [
   'Pending',
 ];
 
+/** Fixed width for every status dropdown -- uniform across rows, tight but readable. */
+const STATUS_SELECT_WIDTH_PX = 76;
+
 const HEADER_CHAR_PX = 7.0;
 const HEADER_PAD = 21;
 
@@ -38,7 +41,7 @@ const DEFAULT_COL_WIDTHS = {
   endDate: labelWidth('End Date'),
   duration: labelWidth('Duration'),
   progress: labelWidth('Progress (%)'),
-  status: labelWidth('Status'),
+  status: Math.max(labelWidth('Status'), STATUS_SELECT_WIDTH_PX + 4),
   owner: labelWidth('Owner') + 16,
   remarks: labelWidth('Remarks'),
   baselineStart: labelWidth('Baseline Start'),
@@ -162,7 +165,8 @@ export default function DataTable({
 
   const handleResizeCol = useCallback((colKey, startX, startWidth) => {
     const onMove = (e) => {
-      const newW = Math.max(MIN_COL_WIDTH, startWidth + (e.clientX - startX));
+      const minW = colKey === 'status' ? STATUS_SELECT_WIDTH_PX : MIN_COL_WIDTH;
+      const newW = Math.max(minW, startWidth + (e.clientX - startX));
       setColWidths((prev) => ({ ...prev, [colKey]: newW }));
     };
     const onUp = () => {
@@ -689,24 +693,30 @@ function ReadOnlyDisplay({ col, value, isParent }) {
 
 function StatusSelect({ value, onChange }) {
   return (
-    <select
-      value={value || ''}
-      onChange={(e) => onChange(e.target.value)}
-      className="w-full text-[11px] outline-none cursor-pointer appearance-none truncate"
-      style={{
-        height: 20,
-        padding: '0 4px',
-        backgroundColor: 'var(--color-bg-tertiary)',
-        color: 'var(--color-text-primary)',
-        border: '1px solid var(--color-border)',
-        borderRadius: 3,
-      }}
-    >
+    <div className="flex items-center h-full overflow-hidden" style={{ maxWidth: '100%' }}>
+      <select
+        value={value || ''}
+        onChange={(e) => onChange(e.target.value)}
+        className="text-[11px] outline-none cursor-pointer appearance-none flex-shrink-0"
+        style={{
+          width: STATUS_SELECT_WIDTH_PX,
+          maxWidth: '100%',
+          boxSizing: 'border-box',
+          height: 20,
+          padding: '0 3px',
+          backgroundColor: 'var(--color-bg-tertiary)',
+          color: 'var(--color-text-primary)',
+          border: '1px solid var(--color-border)',
+          borderRadius: 3,
+        }}
+        title={value || undefined}
+      >
       <option value="">--</option>
       {STATUS_OPTIONS.map((s) => (
         <option key={s} value={s}>{s}</option>
       ))}
-    </select>
+      </select>
+    </div>
   );
 }
 

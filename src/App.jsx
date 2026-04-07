@@ -168,18 +168,46 @@ function buildWbsTree(tasks) {
   });
 }
 
+function parseThemeHex(hex) {
+  if (!hex || typeof hex !== 'string') return null;
+  const h = hex.trim();
+  if (!/^#[0-9a-fA-F]{6}$/.test(h)) return null;
+  return {
+    r: parseInt(h.slice(1, 3), 16),
+    g: parseInt(h.slice(3, 5), 16),
+    b: parseInt(h.slice(5, 7), 16),
+  };
+}
+
+function contrastingTextOnHex(hex) {
+  const rgb = parseThemeHex(hex);
+  if (!rgb) return '#ffffff';
+  const yiq = (rgb.r * 299 + rgb.g * 587 + rgb.b * 114) / 1000;
+  return yiq >= 150 ? '#121212' : '#ffffff';
+}
+
+function refreshAccentContrastVars(root) {
+  const style = getComputedStyle(root);
+  const accent = style.getPropertyValue('--color-accent').trim();
+  const accentHover = style.getPropertyValue('--color-accent-hover').trim();
+  const parsed = parseThemeHex(accent);
+  if (parsed) {
+    root.style.setProperty(
+      '--color-accent-muted',
+      `rgba(${parsed.r}, ${parsed.g}, ${parsed.b}, 0.12)`,
+    );
+    root.style.setProperty('--color-on-accent', contrastingTextOnHex(accent));
+  }
+  const hoverHex = parseThemeHex(accentHover) ? accentHover : accent;
+  root.style.setProperty('--color-on-accent-hover', contrastingTextOnHex(hoverHex));
+}
+
 function applyThemeToDOM(colors) {
   const root = document.documentElement;
   for (const [key, value] of Object.entries(colors)) {
     if (value) root.style.setProperty(`--color-${key}`, value);
   }
-  const accent = colors['accent'];
-  if (accent) {
-    const r = parseInt(accent.slice(1, 3), 16);
-    const g = parseInt(accent.slice(3, 5), 16);
-    const b = parseInt(accent.slice(5, 7), 16);
-    root.style.setProperty('--color-accent-muted', `rgba(${r}, ${g}, ${b}, 0.12)`);
-  }
+  refreshAccentContrastVars(root);
 }
 
 export default function App() {
@@ -265,15 +293,47 @@ export default function App() {
     const cpmResults = computeCpm(wbsTasks);
     const cpmMap = new Map(cpmResults.map((r) => [r.id, r]));
 
+    const successorMap = new Map();
+    for (const task of wbsTasks) {
+      if (!task.dependency) continue;
+      const preds = String(task.dependency).split(',').map((s) => s.trim()).filter(Boolean);
+      for (const predId of preds) {
+        if (!successorMap.has(predId)) successorMap.set(predId, []);
+        successorMap.get(predId).push(task);
+      }
+    }
+
     return wbsTasks.map((task) => {
       const cpm = cpmMap.get(String(task.id));
+      const totalFloat = cpm?.totalFloat ?? 0;
+
+      let freeFloat = 0;
+      if (task.endDate) {
+        const succs = successorMap.get(String(task.id));
+        if (succs && succs.length > 0) {
+          let minSuccStart = null;
+          for (const s of succs) {
+            if (s.startDate && (!minSuccStart || s.startDate < minSuccStart)) {
+              minSuccStart = s.startDate;
+            }
+          }
+          if (minSuccStart) {
+            const gapMs = new Date(minSuccStart + 'T12:00:00') - new Date(task.endDate + 'T12:00:00');
+            const gapDays = Math.round(gapMs / 86400000) - 1;
+            freeFloat = Math.max(gapDays, 0);
+          }
+        }
+      }
+
+      const slackDays = Math.max(totalFloat, freeFloat);
+
       return {
         ...task,
         earlyStart: cpm?.earlyStart ?? 0,
         earlyFinish: cpm?.earlyFinish ?? 0,
         lateStart: cpm?.lateStart ?? 0,
         lateFinish: cpm?.lateFinish ?? 0,
-        totalFloat: cpm?.totalFloat ?? 0,
+        totalFloat: slackDays,
         isCritical: cpm?.isCritical ?? false,
       };
     });
@@ -439,11 +499,8 @@ export default function App() {
   const handleApplyCustomColor = useCallback((key, hex) => {
     setActiveTheme('Custom');
     document.documentElement.style.setProperty(`--color-${key}`, hex);
-    if (key === 'accent') {
-      const r = parseInt(hex.slice(1, 3), 16);
-      const g = parseInt(hex.slice(3, 5), 16);
-      const b = parseInt(hex.slice(5, 7), 16);
-      document.documentElement.style.setProperty('--color-accent-muted', `rgba(${r}, ${g}, ${b}, 0.12)`);
+    if (key === 'accent' || key === 'accent-hover') {
+      refreshAccentContrastVars(document.documentElement);
     }
     setSettings((prev) => {
       const current = extractThemeColors(prev);
@@ -977,7 +1034,7 @@ function ShareNoticeToast({ message: filename, onDismiss }) {
       >
       <div
         className="flex items-center justify-between px-4 py-2.5 rounded-t-xl"
-        style={{ backgroundColor: 'var(--color-accent)', color: '#fff' }}
+        style={{ backgroundColor: 'var(--color-accent)', color: 'var(--color-on-accent)' }}
       >
         <div className="flex items-center gap-2">
           <Share2 size={15} />

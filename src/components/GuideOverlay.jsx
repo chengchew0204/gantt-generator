@@ -121,7 +121,7 @@ const TOUR_STEPS = [
     description:
       'Customize the look and feel with built-in presets or your own colors. Category-specific bar colors are also configurable.',
     details: [
-      'Three presets: Linear Dark, Notion Light, Classic Tremor',
+      'Presets include Linear Dark, Notion Light, Classic Tremor, Gray, and Black & White',
       'Custom color builder for background, text, accent, and more',
       'Category colors: assign distinct bar colors per task category',
       'Theme settings are saved into your Excel file on export',
@@ -450,15 +450,16 @@ export default function GuideOverlay({ open, onClose }) {
                   className="flex items-center gap-1 px-3 py-1.5 rounded-md text-[13px] font-medium cursor-pointer transition-colors"
                   style={{
                     backgroundColor: 'var(--color-accent)',
-                    color: '#fff',
+                    color: 'var(--color-on-accent)',
                   }}
-                  onMouseEnter={(e) =>
-                    (e.currentTarget.style.backgroundColor =
-                      'var(--color-accent-hover)')
-                  }
-                  onMouseLeave={(e) =>
-                    (e.currentTarget.style.backgroundColor = 'var(--color-accent)')
-                  }
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.backgroundColor = 'var(--color-accent-hover)';
+                    e.currentTarget.style.color = 'var(--color-on-accent-hover)';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.backgroundColor = 'var(--color-accent)';
+                    e.currentTarget.style.color = 'var(--color-on-accent)';
+                  }}
                 >
                   {step === totalSteps - 1 ? 'Finish' : 'Next'}
                   {step < totalSteps - 1 && <ChevronRight size={14} />}

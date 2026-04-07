@@ -13,6 +13,8 @@
   --color-accent: #2383e2;
   --color-accent-hover: #1a6dbe;
   --color-accent-muted: rgba(35, 131, 226, 0.12);
+  --color-on-accent: #ffffff;
+  --color-on-accent-hover: #ffffff;
   --color-success: #0f7b0f;
   --color-warning: #d97706;
   --color-danger: #e03e3e;
