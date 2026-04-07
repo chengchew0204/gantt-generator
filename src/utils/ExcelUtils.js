@@ -178,6 +178,18 @@ export function exportExcel(tasks, settings, filename = 'GanttGen_Project.xlsx')
   XLSX.writeFile(wb, filename);
 }
 
+/**
+ * Build an xlsx workbook from tasks + settings and return it as a base64 string.
+ * Used by the Share feature to embed project data into a standalone HTML file.
+ * @param {object[]} tasks
+ * @param {object} settings
+ * @returns {string} base64-encoded xlsx data
+ */
+export function exportExcelToBase64(tasks, settings) {
+  const wb = buildWorkbook(tasks, settings);
+  return XLSX.write(wb, { type: 'base64', bookType: 'xlsx' });
+}
+
 
 /**
  * Build a settings object mapping CSS variable suffixes to hex values from

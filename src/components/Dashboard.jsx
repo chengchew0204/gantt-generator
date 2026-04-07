@@ -19,6 +19,7 @@ import {
   Undo2,
   Redo2,
   ChevronDown,
+  Share2,
 } from 'lucide-react';
 import ViewOptions from './ViewOptions';
 
@@ -38,6 +39,7 @@ export default function Dashboard({
   onDownloadTemplate,
   onExport,
   onExportPng,
+  onShare,
   onOpenGuide,
   onOpenTheme,
   onUndo,
@@ -55,12 +57,12 @@ export default function Dashboard({
 }) {
   const stats = useMemo(() => {
     const total = tasks.length;
-    const completed = tasks.filter((t) => t.progress >= 100).length;
+    const completed = tasks.filter((t) => t.status === 'Completed').length;
     const progress = total > 0
       ? Math.round(tasks.reduce((sum, t) => sum + (t.progress || 0), 0) / total)
       : 0;
-    const inProgress = tasks.filter((t) => t.progress > 0 && t.progress < 100).length;
-    const notStarted = tasks.filter((t) => !t.progress || t.progress === 0).length;
+    const inProgress = tasks.filter((t) => t.status === 'In Progress').length;
+    const notStarted = total - completed - inProgress;
     const critical = tasks.filter((t) => t.isCritical).length;
 
     const today = new Date().toISOString().slice(0, 10);
@@ -81,10 +83,8 @@ export default function Dashboard({
       return a.startDate.localeCompare(b.startDate);
     });
 
-    const currentTask = sorted.find((t) => t.progress > 0 && t.progress < 100);
-    const nextTask = sorted.find(
-      (t) => (t.progress === 0 || t.progress == null) && t.status !== 'Completed',
-    );
+    const currentTask = sorted.find((t) => t.status === 'In Progress');
+    const nextTask = sorted.find((t) => t.status !== 'In Progress' && t.status !== 'Completed');
 
     return { total, completed, progress, inProgress, notStarted, critical, overdue, minStart, maxEnd, currentTask, nextTask };
   }, [tasks]);
@@ -129,6 +129,7 @@ export default function Dashboard({
             <ActionButton icon={Download} label="Save to Excel" onClick={onExport} primary />
           </div>
           <PngExportButton onExportPng={onExportPng} />
+          <ShareButton onShare={onShare} />
 
           <Separator />
 
@@ -288,16 +289,37 @@ function PngExportButton({ onExportPng }) {
   );
 }
 
-function DropdownItem({ label, onClick }) {
+function DropdownItem({ icon: Icon, label, onClick }) {
   return (
     <button
       onClick={onClick}
-      className="w-full text-left px-3 py-1.5 text-[13px] cursor-pointer transition-colors"
+      className="w-full text-left flex items-center gap-2 px-3 py-1.5 text-[13px] cursor-pointer transition-colors"
       style={{ color: 'var(--color-text-secondary)' }}
       onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)'; }}
       onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; }}
     >
+      {Icon && <Icon size={13} style={{ flexShrink: 0, opacity: 0.7 }} />}
       {label}
+    </button>
+  );
+}
+
+function ShareButton({ onShare }) {
+  return (
+    <button
+      onClick={() => onShare('download')}
+      className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[13px] font-medium transition-colors cursor-pointer"
+      style={{
+        backgroundColor: 'var(--color-bg-tertiary)',
+        color: 'var(--color-text-secondary)',
+        border: '1px solid var(--color-border)',
+      }}
+      onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)'; }}
+      onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'var(--color-bg-tertiary)'; }}
+      title="Download a web file you can share with anyone. Double-click to open in any modern browser -- no installation, works offline."
+    >
+      <Share2 size={14} />
+      <span className="hidden sm:inline">Share</span>
     </button>
   );
 }

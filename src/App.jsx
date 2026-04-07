@@ -1,13 +1,13 @@
 import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { toPng } from 'html-to-image';
-import { FileUp, X, AlertCircle } from 'lucide-react';
+import { FileUp, X, AlertCircle, Share2, Globe, MousePointerClick, RotateCcw } from 'lucide-react';
 import Dashboard from './components/Dashboard';
 import DataTable from './components/DataTable';
 import GanttChart from './components/GanttChart';
 import ThemePanel from './components/ThemePanel';
 import GuideOverlay from './components/GuideOverlay';
 import {
-  downloadTemplate, importExcel, exportExcel,
+  downloadTemplate, importExcel, exportExcel, exportExcelToBase64,
   extractThemeColors, writeThemeColors,
 } from './utils/ExcelUtils';
 import { computeCpm } from './utils/CpmEngine';
@@ -203,6 +203,9 @@ export default function App() {
   const isDirtyRef = useRef(false);
   const [dragActive, setDragActive] = useState(false);
   const [importError, setImportError] = useState(null);
+  const [shareNotice, setShareNotice] = useState(null);
+  const [showFireworks, setShowFireworks] = useState(false);
+  const prevAllCompleteRef = useRef(false);
   const dragCounter = useRef(0);
   const containerRef = useRef(null);
   const chartRef = useRef(null);
@@ -284,6 +287,36 @@ export default function App() {
     });
   }, [enrichedTasks, collapsedParents]);
 
+  useEffect(() => {
+    const leafTasks = enrichedTasks.filter((t) => !t.isParent);
+    const allComplete = leafTasks.length > 0 && leafTasks.every((t) => t.status === 'Completed');
+    if (allComplete && !prevAllCompleteRef.current) {
+      const allTasks = enrichedTasks;
+      const taskCount = leafTasks.length;
+      const ownerSet = new Set(leafTasks.map((t) => t.owner).filter(Boolean));
+      const ownerCount = ownerSet.size;
+      const criticalCount = leafTasks.filter((t) => t.isCritical).length;
+
+      let minStart = null;
+      let maxEnd = null;
+      for (const t of allTasks) {
+        if (t.startDate && (!minStart || t.startDate < minStart)) minStart = t.startDate;
+        if (t.endDate && (!maxEnd || t.endDate > maxEnd)) maxEnd = t.endDate;
+      }
+
+      let calendarDays = null;
+      let workingDays = null;
+      if (minStart && maxEnd) {
+        const ms = new Date(maxEnd) - new Date(minStart);
+        calendarDays = Math.round(ms / 86400000) + 1;
+        workingDays = workingDaysBetween(minStart, maxEnd, skipWeekends);
+      }
+
+      setShowFireworks({ taskCount, ownerCount, criticalCount, calendarDays, workingDays, projectName });
+    }
+    prevAllCompleteRef.current = allComplete;
+  }, [enrichedTasks, projectName, skipWeekends]);
+
   const handleUpdateTask = useCallback((taskId, field, value) => {
     recordAndSetTasks((prev) =>
       prev.map((t) => {
@@ -297,6 +330,13 @@ export default function App() {
           updated.endDate = addWorkingDays(value, dur, skipWeekends);
         } else if (field === 'endDate' && value && updated.startDate) {
           updated.duration = workingDaysBetween(updated.startDate, value, skipWeekends);
+        }
+
+        if (field === 'progress' && Number(value) >= 100) {
+          updated.status = 'Completed';
+        }
+        if (field === 'status' && value === 'Completed') {
+          updated.progress = 100;
         }
 
         return updated;
@@ -532,6 +572,70 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [importError]);
 
+  // shareNotice is dismissed manually by the user (no auto-timer).
+
+  // Auto-load project data embedded at share time (window.__GANTTGEN_INITIAL_XLSX__).
+  useEffect(() => {
+    const rawData = window.__GANTTGEN_INITIAL_XLSX__;
+    if (!rawData) return;
+    try { delete window.__GANTTGEN_INITIAL_XLSX__; } catch { /* ignore on strict environments */ }
+
+    const binary = atob(rawData);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    const blob = new Blob([bytes], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    });
+    const file = new File([blob], 'shared-project.xlsx', { type: blob.type });
+    handleImport(file);
+  }, [handleImport]);
+
+  const handleShare = useCallback(() => {
+    // Share only works from the production build where all JS/CSS is inlined in <head>.
+    // In dev mode, <head> contains Vite HMR stubs that won't work standalone.
+    const isDevMode = !!document.querySelector('script[src*="/@vite/client"]');
+    if (isDevMode) {
+      setImportError('Share is only available from the production build (dist/index.html). Run "npm run build" first.');
+      return;
+    }
+
+    const base64Data = exportExcelToBase64(enrichedTasks, settings);
+
+    // Reconstruct the HTML from the live DOM's <head> (which retains the original inlined
+    // <script> and <style> blocks untouched by React) and a clean <body> with an empty #root.
+    // This avoids fetch/XHR which fail on file:// protocol in most browsers.
+    let headContent = document.head.innerHTML;
+
+    // Strip any previously embedded data (re-sharing a shared file).
+    headContent = headContent.replace(
+      /<script>\s*window\.__GANTTGEN_INITIAL_XLSX__\s*=\s*"[^"]*";\s*<\/script>\s*/,
+      '',
+    );
+
+    // Strip Vite dev-server injected styles (data-vite-dev-id) as a safety net.
+    headContent = headContent.replace(/<style[^>]*data-vite-dev-id[^>]*>[\s\S]*?<\/style>\s*/g, '');
+
+    const dataScript = '<script>window.__GANTTGEN_INITIAL_XLSX__="' + base64Data + '";</' + 'script>';
+
+    const html = '<!DOCTYPE html>\n<html lang="en">\n<head>\n'
+      + dataScript + '\n'
+      + headContent
+      + '\n</head>\n<body>\n<div id="root"></div>\n</body>\n</html>';
+
+    const safeProjectName = (projectName.trim() || 'Project').replace(/[^\w\s-]/g, '');
+    const filename = `GanttGen-${safeProjectName}.html`;
+
+    const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
+
+    setShareNotice(filename);
+  }, [enrichedTasks, settings, projectName]);
+
   const handleDragEnter = useCallback((e) => {
     e.preventDefault();
     e.stopPropagation();
@@ -648,6 +752,8 @@ export default function App() {
     >
       {dragActive && <DropOverlay />}
       {importError && <ImportErrorToast message={importError} onDismiss={() => setImportError(null)} />}
+      {showFireworks && <FireworksOverlay stats={showFireworks} onDismiss={() => setShowFireworks(false)} />}
+      {shareNotice && <ShareNoticeToast message={shareNotice} onDismiss={() => setShareNotice(null)} />}
       <Dashboard
         tasks={enrichedTasks}
         projectName={projectName}
@@ -658,6 +764,7 @@ export default function App() {
         onDownloadTemplate={downloadTemplate}
         onExport={handleExport}
         onExportPng={handleExportPng}
+        onShare={handleShare}
         onOpenGuide={handleOpenGuide}
         onOpenTheme={handleOpenTheme}
         onUndo={handleUndo}
@@ -816,6 +923,334 @@ function ImportErrorToast({ message, onDismiss }) {
       >
         <X size={14} />
       </button>
+    </div>
+  );
+}
+
+function ShareNoticeToast({ message: filename, onDismiss }) {
+  return (
+    <div
+      className="absolute inset-0 z-[9999] flex items-start justify-center pt-16 px-4"
+      style={{
+        backgroundColor: 'rgba(15, 15, 18, 0.45)',
+        WebkitBackdropFilter: 'blur(10px)',
+        backdropFilter: 'blur(10px)',
+      }}
+      aria-modal="true"
+      role="dialog"
+      aria-labelledby="share-notice-title"
+    >
+      <div
+        className="rounded-xl shadow-2xl max-w-full"
+        style={{
+          backgroundColor: 'var(--color-bg-secondary)',
+          border: '1px solid var(--color-border)',
+          width: 360,
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+      <div
+        className="flex items-center justify-between px-4 py-2.5 rounded-t-xl"
+        style={{ backgroundColor: 'var(--color-accent)', color: '#fff' }}
+      >
+        <div className="flex items-center gap-2">
+          <Share2 size={15} />
+          <span id="share-notice-title" className="text-[13px] font-semibold">File ready to share</span>
+        </div>
+        <button
+          onClick={onDismiss}
+          className="p-0.5 rounded transition-opacity cursor-pointer opacity-70"
+          onMouseEnter={(e) => { e.currentTarget.style.opacity = '1'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.opacity = '0.7'; }}
+        >
+          <X size={14} />
+        </button>
+      </div>
+
+      <div className="px-4 py-3 flex flex-col gap-2.5">
+        <div
+          className="text-[12px] font-medium px-2.5 py-1.5 rounded-md truncate"
+          style={{
+            backgroundColor: 'var(--color-bg-tertiary)',
+            color: 'var(--color-text-primary)',
+            border: '1px solid var(--color-border-subtle)',
+          }}
+          title={filename}
+        >
+          {filename}
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <HintRow icon={Share2} text="Send this file to anyone via chat, email, or USB" />
+          <HintRow icon={MousePointerClick} text="Recipient double-clicks to open instantly" />
+          <HintRow icon={Globe} text="Works in any modern browser, fully offline" />
+        </div>
+      </div>
+
+      <div className="px-4 pb-3">
+        <button
+          onClick={onDismiss}
+          className="w-full py-1.5 rounded-md text-[12px] font-medium transition-colors cursor-pointer"
+          style={{
+            backgroundColor: 'var(--color-bg-tertiary)',
+            color: 'var(--color-text-secondary)',
+            border: '1px solid var(--color-border)',
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'var(--color-bg-tertiary)'; }}
+        >
+          Got it
+        </button>
+      </div>
+      </div>
+    </div>
+  );
+}
+
+function HintRow({ icon: Icon, text }) {
+  return (
+    <div className="flex items-center gap-2">
+      <Icon size={13} className="flex-shrink-0" style={{ color: 'var(--color-accent)', opacity: 0.8 }} />
+      <span className="text-[12px] leading-snug" style={{ color: 'var(--color-text-secondary)' }}>
+        {text}
+      </span>
+    </div>
+  );
+}
+
+const FW_COLORS = [
+  '#ff1744','#ff5252','#ff9100','#ffea00','#76ff03','#00e676',
+  '#00bcd4','#2979ff','#651fff','#d500f9','#f50057','#ff6d00',
+  '#69f0ae','#40c4ff','#e040fb','#ffff00',
+];
+const GRAVITY = 0.035;
+const FRICTION = 0.985;
+const PARTICLE_COUNT = 120;
+const WAVE_COUNT = 4;
+const ROCKETS_PER_WAVE = 5;
+const WAVE_INTERVAL = 1800;
+const DURATION_MS = 9000;
+
+function FireworksOverlay({ stats, onDismiss }) {
+  const [replayKey, setReplayKey] = useState(0);
+  const canvasRef = useRef(null);
+
+  const handleReplay = () => setReplayKey((k) => k + 1);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    let raf;
+    let particles = [];
+    let rockets = [];
+    let elapsed = 0;
+    let last = performance.now();
+
+    const resize = () => {
+      canvas.width = canvas.offsetWidth * devicePixelRatio;
+      canvas.height = canvas.offsetHeight * devicePixelRatio;
+      ctx.scale(devicePixelRatio, devicePixelRatio);
+    };
+    resize();
+    window.addEventListener('resize', resize);
+
+    const w = () => canvas.offsetWidth;
+    const h = () => canvas.offsetHeight;
+
+    const spawn = (x, y) => {
+      const base = FW_COLORS[Math.floor(Math.random() * FW_COLORS.length)];
+      const accent = FW_COLORS[Math.floor(Math.random() * FW_COLORS.length)];
+      for (let i = 0; i < PARTICLE_COUNT; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const speed = Math.random() * 7 + 2;
+        const isTrail = Math.random() < 0.3;
+        particles.push({
+          x, y,
+          vx: Math.cos(angle) * speed * (isTrail ? 0.4 : 1),
+          vy: Math.sin(angle) * speed * (isTrail ? 0.4 : 1),
+          alpha: 1,
+          color: Math.random() < 0.7 ? base : accent,
+          size: isTrail ? Math.random() * 1.5 + 0.5 : Math.random() * 3.5 + 1.5,
+          decay: 0.004 + Math.random() * 0.006,
+          glow: !isTrail && Math.random() < 0.4,
+        });
+      }
+    };
+
+    const launchRocket = () => {
+      rockets.push({
+        x: w() * (0.08 + Math.random() * 0.84),
+        y: h(),
+        vy: -(h() * 0.015 + Math.random() * 4),
+        targetY: h() * (0.1 + Math.random() * 0.3),
+        trail: [],
+        exploded: false,
+      });
+    };
+
+    const timeouts = [];
+    for (let wave = 0; wave < WAVE_COUNT; wave++) {
+      for (let r = 0; r < ROCKETS_PER_WAVE; r++) {
+        timeouts.push(setTimeout(launchRocket, wave * WAVE_INTERVAL + r * 200 + Math.random() * 150));
+      }
+    }
+
+    const tick = (now) => {
+      const dt = now - last;
+      last = now;
+      elapsed += dt;
+
+      ctx.clearRect(0, 0, w(), h());
+
+      for (let i = rockets.length - 1; i >= 0; i--) {
+        const r = rockets[i];
+        r.y += r.vy;
+        r.trail.push({ x: r.x, y: r.y, alpha: 1 });
+        if (r.trail.length > 12) r.trail.shift();
+
+        if (r.y <= r.targetY && !r.exploded) {
+          r.exploded = true;
+          spawn(r.x, r.y);
+          rockets.splice(i, 1);
+        } else if (!r.exploded) {
+          for (const tp of r.trail) {
+            tp.alpha -= 0.08;
+            if (tp.alpha > 0) {
+              ctx.globalAlpha = tp.alpha * 0.6;
+              ctx.beginPath();
+              ctx.arc(tp.x, tp.y, 1.5, 0, Math.PI * 2);
+              ctx.fillStyle = '#ffe0b2';
+              ctx.fill();
+            }
+          }
+          ctx.globalAlpha = 1;
+          ctx.beginPath();
+          ctx.arc(r.x, r.y, 3, 0, Math.PI * 2);
+          ctx.fillStyle = '#fff';
+          ctx.shadowColor = '#fff';
+          ctx.shadowBlur = 8;
+          ctx.fill();
+          ctx.shadowBlur = 0;
+        }
+      }
+
+      for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
+        p.vx *= FRICTION;
+        p.vy *= FRICTION;
+        p.vy += GRAVITY;
+        p.x += p.vx;
+        p.y += p.vy;
+        p.alpha -= p.decay;
+        if (p.alpha <= 0) { particles.splice(i, 1); continue; }
+        ctx.globalAlpha = p.alpha;
+        if (p.glow) {
+          ctx.shadowColor = p.color;
+          ctx.shadowBlur = 10;
+        }
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+        ctx.fillStyle = p.color;
+        ctx.fill();
+        if (p.glow) ctx.shadowBlur = 0;
+      }
+      ctx.globalAlpha = 1;
+
+      if (elapsed < DURATION_MS || particles.length > 0 || rockets.length > 0) {
+        raf = requestAnimationFrame(tick);
+      }
+    };
+    raf = requestAnimationFrame(tick);
+
+    return () => {
+      cancelAnimationFrame(raf);
+      timeouts.forEach(clearTimeout);
+      window.removeEventListener('resize', resize);
+    };
+  }, [replayKey]);
+
+  const { taskCount, ownerCount, criticalCount, calendarDays, workingDays, projectName: pName } = stats || {};
+
+  const rewindItems = [
+    calendarDays != null && { value: calendarDays, unit: calendarDays === 1 ? 'day' : 'days', label: 'calendar span' },
+    workingDays != null && { value: workingDays, unit: workingDays === 1 ? 'working day' : 'working days', label: 'excl. weekends' },
+    taskCount > 0 && { value: taskCount, unit: taskCount === 1 ? 'task' : 'tasks', label: 'completed' },
+    criticalCount > 0 && { value: criticalCount, unit: criticalCount === 1 ? 'critical task' : 'critical tasks', label: 'on the critical path' },
+    ownerCount > 0 && { value: ownerCount, unit: ownerCount === 1 ? 'team member' : 'team members', label: 'delivered this' },
+  ].filter(Boolean);
+
+  return (
+    <div
+      className="absolute inset-0 z-[9999] flex flex-col items-center justify-center gap-10"
+      style={{ backgroundColor: 'rgba(5, 5, 12, 0.65)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)' }}
+      onClick={onDismiss}
+    >
+      <canvas
+        ref={canvasRef}
+        className="absolute inset-0 w-full h-full pointer-events-none"
+      />
+
+      <div className="relative text-center select-none pointer-events-none px-8">
+        {pName && (
+          <div className="text-[15px] font-semibold uppercase tracking-widest mb-3" style={{ color: 'rgba(255,220,100,0.75)' }}>
+            {pName}
+          </div>
+        )}
+        <div
+          className="text-[56px] font-extrabold tracking-tight leading-tight"
+          style={{ color: '#fff', textShadow: '0 0 40px rgba(255,200,50,0.55), 0 2px 16px rgba(0,0,0,0.6)' }}
+        >
+          Mission Accomplished!
+        </div>
+        <div className="text-[20px] font-medium mt-4" style={{ color: 'rgba(255,255,255,0.7)' }}>
+          Every task, every milestone -- done. You crushed it.
+        </div>
+      </div>
+
+      {rewindItems.length > 0 && (
+        <div
+          className="relative flex flex-wrap justify-center gap-12 px-10 pointer-events-none select-none"
+          style={{ maxWidth: 780 }}
+        >
+          {rewindItems.map((item) => (
+            <div key={item.label} className="flex flex-col items-center">
+              <div className="text-[52px] font-extrabold tabular-nums leading-none" style={{ color: '#fff' }}>
+                {item.value}
+              </div>
+              <div className="text-[16px] font-semibold mt-2" style={{ color: 'rgba(255,220,100,0.9)' }}>
+                {item.unit}
+              </div>
+              <div className="text-[13px] mt-1" style={{ color: 'rgba(255,255,255,0.4)' }}>
+                {item.label}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="relative flex items-center gap-8 mt-2">
+        <button
+          title="Replay"
+          onClick={(e) => { e.stopPropagation(); handleReplay(); }}
+          className="flex items-center justify-center cursor-pointer transition-opacity"
+          style={{ color: 'rgba(255,255,255,0.55)', background: 'none', border: 'none', padding: 0 }}
+          onMouseEnter={(e) => { e.currentTarget.style.color = '#fff'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.color = 'rgba(255,255,255,0.55)'; }}
+        >
+          <RotateCcw size={28} />
+        </button>
+        <button
+          title="Dismiss"
+          onClick={(e) => { e.stopPropagation(); onDismiss(); }}
+          className="flex items-center justify-center cursor-pointer transition-opacity"
+          style={{ color: 'rgba(255,255,255,0.55)', background: 'none', border: 'none', padding: 0 }}
+          onMouseEnter={(e) => { e.currentTarget.style.color = '#fff'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.color = 'rgba(255,255,255,0.55)'; }}
+        >
+          <X size={28} />
+        </button>
+      </div>
     </div>
   );
 }
