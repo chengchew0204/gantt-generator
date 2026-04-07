@@ -156,7 +156,9 @@ export default function Dashboard({
         <StatCard icon={CheckCircle2} label="Completed" value={`${stats.completed} / ${stats.total}`} color="var(--color-success)" />
         <StatCard icon={Clock} label="In Progress" value={String(stats.inProgress)} color="var(--color-info)" />
         <StatCard icon={CircleDot} label="Not Started" value={String(stats.notStarted)} color="var(--color-text-muted)" />
-        <StatCard icon={AlertTriangle} label="Critical" value={String(stats.critical)} color="var(--color-critical-path)" />
+        {viewOptions?.showCriticalPath && (
+          <StatCard icon={AlertTriangle} label="Critical" value={String(stats.critical)} color="var(--color-critical-path)" />
+        )}
         {stats.overdue > 0 && (
           <StatCard icon={AlertTriangle} label="Overdue" value={String(stats.overdue)} color="var(--color-danger)" />
         )}

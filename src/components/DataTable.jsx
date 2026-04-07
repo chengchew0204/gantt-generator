@@ -201,12 +201,30 @@ export default function DataTable({
       document.removeEventListener('mouseup', onUp);
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
+
       const from = dragRef.current;
       const drop = dropRef.current;
-      if (from != null && drop != null && from !== drop && onReorderTask) {
-        const to = drop > from ? drop - 1 : drop;
-        if (to !== from) onReorderTask(from, to);
+
+      if (from != null && drop != null && onReorderTask) {
+        const draggedId = tasks[from]?.id;
+        if (draggedId != null) {
+          // Find the first visible task after the drop slot that is not the dragged row itself.
+          // This becomes the "insert before" anchor (null = append at end).
+          let beforeId = null;
+          for (let i = drop; i < tasks.length; i++) {
+            if (i !== from) {
+              beforeId = tasks[i].id;
+              break;
+            }
+          }
+          // Only reorder if the anchor actually differs from the current position.
+          const currentBeforeId = from + 1 < tasks.length ? tasks[from + 1]?.id : null;
+          if (beforeId !== currentBeforeId) {
+            onReorderTask(draggedId, beforeId);
+          }
+        }
       }
+
       dragRef.current = null;
       dropRef.current = null;
       setDragIndex(null);
@@ -217,7 +235,7 @@ export default function DataTable({
     document.body.style.userSelect = 'none';
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
-  }, [tasks.length, onReorderTask]);
+  }, [tasks, onReorderTask]);
 
   if (tasks.length === 0 && (!allTasks || allTasks.length === 0)) {
     return (
@@ -241,7 +259,7 @@ export default function DataTable({
     );
   }
 
-  const totalMinWidth = 6 + 32 + cols.reduce((sum, c) => sum + getColW(colWidths, c.key), 0);
+  const totalMinWidth = 32 + 32 + cols.reduce((sum, c) => sum + getColW(colWidths, c.key), 0);
 
   return (
     <div className="flex flex-col h-full relative">
@@ -260,7 +278,7 @@ export default function DataTable({
             className="flex items-center text-[13px] font-medium whitespace-nowrap h-full"
             style={{ minWidth: totalMinWidth, color: 'var(--color-text-muted)', transform: `translateX(${-hScrollLeft}px)` }}
           >
-            <div className="w-6 flex-shrink-0 px-1" />
+            <div className="w-8 flex-shrink-0 px-1" />
             {cols.map((col) => (
               <ResizableHeaderCell
                 key={col.key}
@@ -407,15 +425,24 @@ function TaskRow({
       onMouseLeave={() => setHovering(false)}
       onClick={() => { if (onSelect) onSelect(String(task.id)); }}
     >
-      <div className="w-6 flex-shrink-0 px-1 flex items-center justify-center">
+      <div className="w-8 flex-shrink-0 px-0.5 flex items-center justify-center gap-0.5">
         {isParent ? (
-          <button
-            onClick={(e) => { e.stopPropagation(); onToggleCollapse(String(task.id)); }}
-            className="p-0.5 cursor-pointer rounded transition-colors"
-            style={{ color: 'var(--color-text-muted)' }}
-          >
-            {isCollapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
-          </button>
+          <>
+            <div
+              onMouseDown={(e) => { e.stopPropagation(); onDragStart(index, e); }}
+              className="p-0.5 rounded flex-shrink-0"
+              style={{ cursor: hovering ? 'grab' : 'default', color: hovering ? 'var(--color-text-muted)' : 'transparent' }}
+            >
+              <GripVertical size={10} />
+            </div>
+            <button
+              onClick={(e) => { e.stopPropagation(); onToggleCollapse(String(task.id)); }}
+              className="p-0.5 cursor-pointer rounded transition-colors flex-shrink-0"
+              style={{ color: 'var(--color-text-muted)' }}
+            >
+              {isCollapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
+            </button>
+          </>
         ) : hovering ? (
           <div
             onMouseDown={(e) => onDragStart(index, e)}
@@ -450,12 +477,17 @@ function TaskRow({
         );
       })}
       <div className="flex-1" />
-      <div className="w-8 flex-shrink-0 px-1 flex items-center justify-center">
+      <div
+        className="w-8 flex-shrink-0 px-1 flex items-center justify-center transition-colors"
+        style={{ position: 'sticky', right: 0, backgroundColor: bgColor }}
+      >
         {hovering && (
           <button
-            onClick={() => onDeleteTask(task.id)}
+            onClick={(e) => { e.stopPropagation(); onDeleteTask(task.id); }}
             className="p-0.5 rounded cursor-pointer transition-colors"
             style={{ color: 'var(--color-text-muted)' }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--color-danger)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--color-text-muted)'; }}
             title="Delete task"
           >
             <Trash2 size={12} />

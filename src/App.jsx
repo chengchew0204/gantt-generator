@@ -385,12 +385,38 @@ export default function App() {
     recordAndSetTasks((prev) => prev.filter((t) => String(t.id) !== String(taskId)));
   }, [recordAndSetTasks]);
 
-  const handleReorderTask = useCallback((fromIndex, toIndex) => {
+  // Move a task (and all its descendants) so they appear before `beforeId` in the raw list.
+  // `beforeId` = null means append at the end.
+  // When a collapsed parent is the drop target, the DataTable passes the ID of the next
+  // visible task (which is already after all hidden children), so the group lands correctly.
+  const handleReorderTask = useCallback((draggedId, beforeId) => {
     recordAndSetTasks((prev) => {
-      const next = [...prev];
-      const [moved] = next.splice(fromIndex, 1);
-      next.splice(toIndex, 0, moved);
-      return next;
+      // Collect the dragged task plus every descendant (preserving internal order).
+      const toMoveIds = new Set();
+      const collectGroup = (id) => {
+        toMoveIds.add(String(id));
+        for (const t of prev) {
+          if (String(t.parentId) === String(id)) collectGroup(t.id);
+        }
+      };
+      collectGroup(draggedId);
+
+      // If the anchor is inside the moving group, treat as no-op.
+      if (beforeId != null && toMoveIds.has(String(beforeId))) return prev;
+
+      const movedTasks = prev.filter((t) => toMoveIds.has(String(t.id)));
+      const remaining  = prev.filter((t) => !toMoveIds.has(String(t.id)));
+
+      if (beforeId == null) return [...remaining, ...movedTasks];
+
+      const insertAt = remaining.findIndex((t) => String(t.id) === String(beforeId));
+      if (insertAt === -1) return [...remaining, ...movedTasks];
+
+      return [
+        ...remaining.slice(0, insertAt),
+        ...movedTasks,
+        ...remaining.slice(insertAt),
+      ];
     });
   }, [recordAndSetTasks]);
 
