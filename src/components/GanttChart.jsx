@@ -715,15 +715,9 @@ function TaskBar({ task, y, minDate, unitWidth, showCritical, showSlack, onUpdat
   const progress = clampProgress(task.progress);
   const progressWidth = width * (progress / 100);
   const progressLabel = `${progress}%`;
-  const canShowProgressInside = showProgressPercent && progressWidth >= 30;
-  const showProgressOutside = showProgressPercent && !canShowProgressInside;
-  const progressTextX = canShowProgressInside
-    ? x + Math.max(progressWidth / 2, 16)
-    : x + width + 4;
+  const progressTextX = x + width / 2;
   const progressTextY = barY + BAR_HEIGHT / 2 + 3.5;
-  const progressTextColor = canShowProgressInside ? '#ffffff' : 'var(--color-text-muted)';
-  const outsideProgressX = x + width + 4;
-  const taskNamePad = showProgressOutside ? 30 : 0;
+  const progressClipId = `task-progress-${String(task.id)}`;
   const slackWidth = showSlack && task.totalFloat > 0 ? task.totalFloat * unitWidth : 0;
   const resizeWidth = 6;
 
@@ -808,11 +802,16 @@ function TaskBar({ task, y, minDate, unitWidth, showCritical, showSlack, onUpdat
   const middleWidth = Math.max(width - handleZone * 2, 2);
   const clampedSlackW = Math.min(slackWidth, 400);
   const nameX = slackWidth > 0
-    ? x + width + clampedSlackW + 4 + taskNamePad
-    : x + width + 4 + taskNamePad;
+    ? x + width + clampedSlackW + 4
+    : x + width + 4;
 
   return (
     <g onClick={(e) => e.stopPropagation()}>
+      <defs>
+        <clipPath id={progressClipId}>
+          <rect x={x} y={barY} width={width} height={BAR_HEIGHT} rx={3} />
+        </clipPath>
+      </defs>
       {selected && (
         <rect x={0} y={y} width={9999} height={ROW_HEIGHT} fill={barColor} opacity={0.06} />
       )}
@@ -830,10 +829,11 @@ function TaskBar({ task, y, minDate, unitWidth, showCritical, showSlack, onUpdat
         <text
           x={progressTextX}
           y={progressTextY}
-          textAnchor={canShowProgressInside ? 'middle' : 'start'}
-          fill={progressTextColor}
+          textAnchor="middle"
+          fill="#ffffff"
           fontSize={11}
           fontWeight={700}
+          clipPath={`url(#${progressClipId})`}
           style={{ pointerEvents: 'none' }}
         >
           {progressLabel}
@@ -918,16 +918,16 @@ function SummaryBar({ task, y, minDate, unitWidth, showTaskNames, showProgressPe
   const progress = clampProgress(task.progress);
   const progressWidth = width * (progress / 100);
   const progressLabel = `${progress}%`;
-  const canShowProgressInside = showProgressPercent && progressWidth >= 30;
-  const showProgressOutside = showProgressPercent && !canShowProgressInside;
-  const outsideProgressX = x + width + 4;
-  const outsideProgressY = barY + SUMMARY_HEIGHT / 2 + 3.5;
-  const progressTextX = canShowProgressInside
-    ? x + Math.max(progressWidth / 2, 16)
-    : outsideProgressX;
-  const taskNamePad = showProgressOutside ? 30 : 0;
+  const progressTextX = x + width / 2;
+  const progressTextY = barY + SUMMARY_HEIGHT / 2 + 3.5;
+  const progressClipId = `summary-progress-${String(task.id)}`;
   return (
     <g>
+      <defs>
+        <clipPath id={progressClipId}>
+          <rect x={x} y={barY} width={width} height={SUMMARY_HEIGHT} />
+        </clipPath>
+      </defs>
       <rect x={x} y={barY} width={width} height={SUMMARY_HEIGHT} fill="var(--color-text-muted)" opacity={0.5} />
       {progressWidth > 0 && (
         <rect x={x} y={barY} width={progressWidth} height={SUMMARY_HEIGHT} fill="var(--color-accent)" opacity={0.88} />
@@ -935,11 +935,12 @@ function SummaryBar({ task, y, minDate, unitWidth, showTaskNames, showProgressPe
       {showProgressPercent && (
         <text
           x={progressTextX}
-          y={outsideProgressY}
-          textAnchor={canShowProgressInside ? 'middle' : 'start'}
-          fill={canShowProgressInside ? '#ffffff' : 'var(--color-text-muted)'}
+          y={progressTextY}
+          textAnchor="middle"
+          fill="#ffffff"
           fontSize={10}
           fontWeight={700}
+          clipPath={`url(#${progressClipId})`}
           style={{ pointerEvents: 'none' }}
         >
           {progressLabel}
@@ -947,7 +948,7 @@ function SummaryBar({ task, y, minDate, unitWidth, showTaskNames, showProgressPe
       )}
       <rect x={x} y={barY} width={capWidth} height={SUMMARY_HEIGHT + 4} fill="var(--color-text-muted)" opacity={0.7} />
       <rect x={x + width - capWidth} y={barY} width={capWidth} height={SUMMARY_HEIGHT + 4} fill="var(--color-text-muted)" opacity={0.7} />
-      {showTaskNames && <text x={x + width + 4 + taskNamePad} y={barY + SUMMARY_HEIGHT / 2 + 3.5} fill="var(--color-text-muted)" fontSize={12} fontWeight={700}>{task.name}</text>}
+      {showTaskNames && <text x={x + width + 4} y={barY + SUMMARY_HEIGHT / 2 + 3.5} fill="var(--color-text-muted)" fontSize={12} fontWeight={700}>{task.name}</text>}
     </g>
   );
 }
