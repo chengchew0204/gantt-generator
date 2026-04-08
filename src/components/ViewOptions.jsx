@@ -7,6 +7,7 @@ const CHART_TOGGLES = [
   { key: 'showTodayLine', label: 'Today Line' },
   { key: 'showBaseline', label: 'Baseline Bars' },
   { key: 'showTaskNames', label: 'Task Names on Chart' },
+  { key: 'showProgressPercent', label: 'Progress % on Bars' },
   { key: 'skipWeekends', label: 'Skip Weekends (working days)' },
   { key: 'showScaleButtons', label: 'Day/Week Scale Buttons' },
   { key: 'showWeekLabels', label: 'Week Number Labels (W1, W2...)' },

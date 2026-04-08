@@ -46,6 +46,7 @@ export default function GanttChart({ tasks, allTasks, viewOptions = {}, scrollTo
     monthLabels: toBool(viewOptions.showMonthLabels ?? true),
     dayLabels: toBool(viewOptions.showDayLabels ?? true),
     taskNames: toBool(viewOptions.showTaskNames ?? true),
+    progressPercent: toBool(viewOptions.showProgressPercent ?? true),
   };
 
   const applyZoom = useCallback((pct) => {
@@ -368,11 +369,33 @@ export default function GanttChart({ tasks, allTasks, viewOptions = {}, scrollTo
                 )}
 
                 {task.isParent ? (
-                  <SummaryBar task={task} y={y} minDate={minDate} unitWidth={unitWidth} showTaskNames={show.taskNames} />
+                  <SummaryBar
+                    task={task}
+                    y={y}
+                    minDate={minDate}
+                    unitWidth={unitWidth}
+                    showTaskNames={show.taskNames}
+                    showProgressPercent={show.progressPercent}
+                  />
                 ) : task.duration === 0 ? (
                   <MilestoneDiamond task={task} y={y} minDate={minDate} unitWidth={unitWidth} showCritical={show.criticalPath} onUpdateTaskFields={onUpdateTaskFields} selected={String(task.id) === String(selectedTaskId)} onSelect={onSelectTask} categoryColors={categoryColors} onBeginDrag={onBeginDrag} onEndDrag={onEndDrag} showTaskNames={show.taskNames} />
                 ) : (
-                  <TaskBar task={task} y={y} minDate={minDate} unitWidth={unitWidth} showCritical={show.criticalPath} showSlack={show.slack} onUpdateTaskFields={onUpdateTaskFields} selected={String(task.id) === String(selectedTaskId)} onSelect={onSelectTask} categoryColors={categoryColors} onBeginDrag={onBeginDrag} onEndDrag={onEndDrag} showTaskNames={show.taskNames} />
+                  <TaskBar
+                    task={task}
+                    y={y}
+                    minDate={minDate}
+                    unitWidth={unitWidth}
+                    showCritical={show.criticalPath}
+                    showSlack={show.slack}
+                    onUpdateTaskFields={onUpdateTaskFields}
+                    selected={String(task.id) === String(selectedTaskId)}
+                    onSelect={onSelectTask}
+                    categoryColors={categoryColors}
+                    onBeginDrag={onBeginDrag}
+                    onEndDrag={onEndDrag}
+                    showTaskNames={show.taskNames}
+                    showProgressPercent={show.progressPercent}
+                  />
                 )}
               </g>
             );
@@ -673,7 +696,13 @@ function DragPreviewBar({ dragStart, dragEnd, minDate, unitWidth, rowIndex }) {
   );
 }
 
-function TaskBar({ task, y, minDate, unitWidth, showCritical, showSlack, onUpdateTaskFields, selected, onSelect, categoryColors = {}, onBeginDrag, onEndDrag, showTaskNames }) {
+function clampProgress(progress) {
+  const numeric = Number(progress);
+  if (!Number.isFinite(numeric)) return 0;
+  return Math.max(0, Math.min(100, Math.round(numeric)));
+}
+
+function TaskBar({ task, y, minDate, unitWidth, showCritical, showSlack, onUpdateTaskFields, selected, onSelect, categoryColors = {}, onBeginDrag, onEndDrag, showTaskNames, showProgressPercent }) {
   if (!task.startDate || !task.endDate) return null;
   const startOffset = daysBetween(minDate, task.startDate);
   const duration = daysBetween(task.startDate, task.endDate) + 1;
@@ -683,7 +712,14 @@ function TaskBar({ task, y, minDate, unitWidth, showCritical, showSlack, onUpdat
   const isCritical = showCritical && task.isCritical;
   const catColor = !showCritical && task.category ? categoryColors[task.category.trim()] : null;
   const barColor = isCritical ? 'var(--color-critical-path)' : (catColor || 'var(--color-accent)');
-  const progressWidth = width * Math.min((task.progress || 0) / 100, 1);
+  const progress = clampProgress(task.progress);
+  const progressWidth = width * (progress / 100);
+  const progressLabel = `${progress}%`;
+  const canShowProgressInside = showProgressPercent && width >= 34;
+  const showProgressOutside = showProgressPercent && !canShowProgressInside;
+  const outsideProgressX = x + width + 4;
+  const outsideProgressY = barY + BAR_HEIGHT / 2 + 3.5;
+  const taskNamePad = showProgressOutside ? 30 : 0;
   const slackWidth = showSlack && task.totalFloat > 0 ? task.totalFloat * unitWidth : 0;
   const resizeWidth = 6;
 
@@ -767,7 +803,9 @@ function TaskBar({ task, y, minDate, unitWidth, showCritical, showSlack, onUpdat
   const middleX = x + handleZone;
   const middleWidth = Math.max(width - handleZone * 2, 2);
   const clampedSlackW = Math.min(slackWidth, 400);
-  const nameX = slackWidth > 0 ? x + width + clampedSlackW + 4 : x + width + 4;
+  const nameX = slackWidth > 0
+    ? x + width + clampedSlackW + 4 + taskNamePad
+    : x + width + 4 + taskNamePad;
 
   return (
     <g onClick={(e) => e.stopPropagation()}>
@@ -784,6 +822,34 @@ function TaskBar({ task, y, minDate, unitWidth, showCritical, showSlack, onUpdat
       )}
       <rect x={x} y={barY} width={width} height={BAR_HEIGHT} rx={3} fill={barColor} opacity={0.25} />
       {progressWidth > 0 && <rect x={x} y={barY} width={progressWidth} height={BAR_HEIGHT} rx={3} fill={barColor} opacity={0.85} />}
+      {canShowProgressInside && (
+        <text
+          x={x + width / 2}
+          y={barY + BAR_HEIGHT / 2 + 3.5}
+          textAnchor="middle"
+          fill="#ffffff"
+          fontSize={11}
+          fontWeight={700}
+          stroke="rgba(0,0,0,0.35)"
+          strokeWidth={2}
+          paintOrder="stroke"
+          style={{ pointerEvents: 'none' }}
+        >
+          {progressLabel}
+        </text>
+      )}
+      {showProgressOutside && (
+        <text
+          x={outsideProgressX}
+          y={outsideProgressY}
+          fill="var(--color-text-muted)"
+          fontSize={11}
+          fontWeight={700}
+          style={{ pointerEvents: 'none' }}
+        >
+          {progressLabel}
+        </text>
+      )}
       {selected && (
         <rect x={x - 2} y={barY - 2} width={width + 4} height={BAR_HEIGHT + 4}
           rx={4} fill="none" stroke={barColor} strokeWidth={2} opacity={0.8} />
@@ -852,7 +918,7 @@ function MilestoneDiamond({ task, y, minDate, unitWidth, showCritical, onUpdateT
   );
 }
 
-function SummaryBar({ task, y, minDate, unitWidth, showTaskNames }) {
+function SummaryBar({ task, y, minDate, unitWidth, showTaskNames, showProgressPercent }) {
   if (!task.startDate || !task.endDate) return null;
   const startOffset = daysBetween(minDate, task.startDate);
   const duration = daysBetween(task.startDate, task.endDate) + 1;
@@ -860,12 +926,47 @@ function SummaryBar({ task, y, minDate, unitWidth, showTaskNames }) {
   const width = Math.max(duration * unitWidth - 2, 4);
   const barY = y + (ROW_HEIGHT - SUMMARY_HEIGHT) / 2;
   const capWidth = 3;
+  const progress = clampProgress(task.progress);
+  const progressLabel = `${progress}%`;
+  const canShowProgressInside = showProgressPercent && width >= 34;
+  const showProgressOutside = showProgressPercent && !canShowProgressInside;
+  const outsideProgressX = x + width + 4;
+  const outsideProgressY = barY + SUMMARY_HEIGHT / 2 + 3.5;
+  const taskNamePad = showProgressOutside ? 30 : 0;
   return (
     <g>
       <rect x={x} y={barY} width={width} height={SUMMARY_HEIGHT} fill="var(--color-text-muted)" opacity={0.5} />
+      {canShowProgressInside && (
+        <text
+          x={x + width / 2}
+          y={barY + SUMMARY_HEIGHT / 2 + 3.5}
+          textAnchor="middle"
+          fill="#ffffff"
+          fontSize={10}
+          fontWeight={700}
+          stroke="rgba(0,0,0,0.4)"
+          strokeWidth={2}
+          paintOrder="stroke"
+          style={{ pointerEvents: 'none' }}
+        >
+          {progressLabel}
+        </text>
+      )}
+      {showProgressOutside && (
+        <text
+          x={outsideProgressX}
+          y={outsideProgressY}
+          fill="var(--color-text-muted)"
+          fontSize={10}
+          fontWeight={700}
+          style={{ pointerEvents: 'none' }}
+        >
+          {progressLabel}
+        </text>
+      )}
       <rect x={x} y={barY} width={capWidth} height={SUMMARY_HEIGHT + 4} fill="var(--color-text-muted)" opacity={0.7} />
       <rect x={x + width - capWidth} y={barY} width={capWidth} height={SUMMARY_HEIGHT + 4} fill="var(--color-text-muted)" opacity={0.7} />
-      {showTaskNames && <text x={x + width + 4} y={barY + SUMMARY_HEIGHT / 2 + 3.5} fill="var(--color-text-muted)" fontSize={12} fontWeight={700}>{task.name}</text>}
+      {showTaskNames && <text x={x + width + 4 + taskNamePad} y={barY + SUMMARY_HEIGHT / 2 + 3.5} fill="var(--color-text-muted)" fontSize={12} fontWeight={700}>{task.name}</text>}
     </g>
   );
 }
