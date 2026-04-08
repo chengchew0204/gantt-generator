@@ -715,7 +715,7 @@ function TaskBar({ task, y, minDate, unitWidth, showCritical, showSlack, onUpdat
   const progress = clampProgress(task.progress);
   const progressWidth = width * (progress / 100);
   const progressLabel = `${progress}%`;
-  const progressTextX = x + width / 2;
+  const progressTextX = progress > 0 ? x + progressWidth / 2 : x + width / 2;
   const progressTextY = barY + BAR_HEIGHT / 2 + 3.5;
   const progressClipId = `task-progress-${String(task.id)}`;
   const slackWidth = showSlack && task.totalFloat > 0 ? task.totalFloat * unitWidth : 0;
@@ -918,7 +918,7 @@ function SummaryBar({ task, y, minDate, unitWidth, showTaskNames, showProgressPe
   const progress = clampProgress(task.progress);
   const progressWidth = width * (progress / 100);
   const progressLabel = `${progress}%`;
-  const progressTextX = x + width / 2;
+  const progressTextX = progress > 0 ? x + progressWidth / 2 : x + width / 2;
   const progressTextY = barY + SUMMARY_HEIGHT / 2 + 3.5;
   const progressClipId = `summary-progress-${String(task.id)}`;
   return (
