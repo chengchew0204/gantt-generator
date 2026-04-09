@@ -713,7 +713,8 @@ function TaskBar({ task, y, minDate, unitWidth, showCritical, showSlack, onUpdat
   const catColor = !showCritical && task.category ? categoryColors[task.category.trim()] : null;
   const barColor = isCritical ? 'var(--color-critical-path)' : (catColor || 'var(--color-accent)');
   const progress = clampProgress(task.progress);
-  const progressWidth = width * (progress / 100);
+  const renderedProgress = showProgressPercent ? progress : 100;
+  const progressWidth = width * (renderedProgress / 100);
   const progressLabel = `${progress}%`;
   const progressTextX = progress > 0 ? x + progressWidth / 2 : x + width / 2;
   const progressTextY = barY + BAR_HEIGHT / 2 + 3.5;
@@ -921,6 +922,7 @@ function SummaryBar({ task, y, minDate, unitWidth, showTaskNames, showProgressPe
   const progressTextX = progress > 0 ? x + progressWidth / 2 : x + width / 2;
   const progressTextY = barY + SUMMARY_HEIGHT / 2 + 3.5;
   const progressClipId = `summary-progress-${String(task.id)}`;
+  const summaryBaseOpacity = showProgressPercent ? 0.5 : 0.72;
   return (
     <g>
       <defs>
@@ -928,8 +930,8 @@ function SummaryBar({ task, y, minDate, unitWidth, showTaskNames, showProgressPe
           <rect x={x} y={barY} width={width} height={SUMMARY_HEIGHT} />
         </clipPath>
       </defs>
-      <rect x={x} y={barY} width={width} height={SUMMARY_HEIGHT} fill="var(--color-text-muted)" opacity={0.5} />
-      {progressWidth > 0 && (
+      <rect x={x} y={barY} width={width} height={SUMMARY_HEIGHT} fill="var(--color-text-muted)" opacity={summaryBaseOpacity} />
+      {showProgressPercent && progressWidth > 0 && (
         <rect x={x} y={barY} width={progressWidth} height={SUMMARY_HEIGHT} fill="var(--color-accent)" opacity={0.88} />
       )}
       {showProgressPercent && (
