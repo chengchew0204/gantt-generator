@@ -136,37 +136,64 @@ function nextId(tasks) {
   return String(max + 1);
 }
 
-function buildWbsTree(tasks) {
-  const parentIds = new Set();
+function buildWbsTree(tasks, skipWeekends) {
+  const childrenMap = new Map();
   for (const t of tasks) {
-    if (t.parentId) parentIds.add(String(t.parentId));
+    if (t.parentId) {
+      const pid = String(t.parentId);
+      if (!childrenMap.has(pid)) childrenMap.set(pid, []);
+      childrenMap.get(pid).push(t);
+    }
   }
 
-  return tasks.map((task) => {
-    const id = String(task.id);
-    if (!parentIds.has(id)) return task;
+  const resultMap = new Map();
+  for (const t of tasks) {
+    resultMap.set(String(t.id), { ...t });
+  }
 
-    const children = tasks.filter((c) => String(c.parentId) === id);
+  const resolved = new Set();
+
+  function resolve(taskId) {
+    if (resolved.has(taskId)) {
+      const t = resultMap.get(taskId);
+      return { startDate: t.startDate, endDate: t.endDate, progress: t.progress || 0 };
+    }
+    resolved.add(taskId);
+
+    const children = childrenMap.get(taskId);
+    if (!children || children.length === 0) {
+      const t = resultMap.get(taskId);
+      return { startDate: t.startDate, endDate: t.endDate, progress: t.progress || 0 };
+    }
+
     let minStart = null;
     let maxEnd = null;
     let totalProgress = 0;
-    let childCount = 0;
 
     for (const child of children) {
-      if (child.startDate && (!minStart || child.startDate < minStart)) minStart = child.startDate;
-      if (child.endDate && (!maxEnd || child.endDate > maxEnd)) maxEnd = child.endDate;
-      totalProgress += child.progress || 0;
-      childCount++;
+      const r = resolve(String(child.id));
+      if (r.startDate && (!minStart || r.startDate < minStart)) minStart = r.startDate;
+      if (r.endDate && (!maxEnd || r.endDate > maxEnd)) maxEnd = r.endDate;
+      totalProgress += r.progress;
     }
 
-    return {
-      ...task,
-      isParent: true,
-      startDate: minStart || task.startDate,
-      endDate: maxEnd || task.endDate,
-      progress: childCount > 0 ? Math.round(totalProgress / childCount) : task.progress,
-    };
-  });
+    const task = resultMap.get(taskId);
+    task.isParent = true;
+    task.startDate = minStart || task.startDate;
+    task.endDate = maxEnd || task.endDate;
+    task.progress = children.length > 0 ? Math.round(totalProgress / children.length) : task.progress;
+    task.duration = task.startDate && task.endDate
+      ? workingDaysBetween(task.startDate, task.endDate, skipWeekends)
+      : 0;
+
+    return { startDate: task.startDate, endDate: task.endDate, progress: task.progress };
+  }
+
+  for (const parentId of childrenMap.keys()) {
+    resolve(parentId);
+  }
+
+  return tasks.map((t) => resultMap.get(String(t.id)));
 }
 
 function parseThemeHex(hex) {
@@ -287,7 +314,7 @@ export default function App() {
     (showWeekLabels ? 18 : 0) +
     (showDayLabels ? 18 : 0);
 
-  const wbsTasks = useMemo(() => buildWbsTree(tasks), [tasks]);
+  const wbsTasks = useMemo(() => buildWbsTree(tasks, skipWeekends), [tasks, skipWeekends]);
 
   const enrichedTasks = useMemo(() => {
     if (wbsTasks.length === 0) return [];
