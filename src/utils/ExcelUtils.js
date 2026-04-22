@@ -55,6 +55,9 @@ const SETTINGS_FIELDS = [
   { key: 'colWidths', label: 'Column Widths', defaultValue: '{}' },
   { key: 'ganttScale', label: 'Gantt Scale', defaultValue: 'day' },
   { key: 'ganttZoom', label: 'Gantt Zoom', defaultValue: '100' },
+  { key: 'tabs', label: 'Tabs', defaultValue: '[]' },
+  { key: 'activeTab', label: 'Active Tab', defaultValue: 'gantt' },
+  { key: 'gridCellStyles', label: 'Grid Cell Styles', defaultValue: '{}' },
 ];
 
 export function downloadTemplate() {
@@ -116,11 +119,17 @@ function validateTaskHeaders(wb) {
  * @param {File} file
  * @returns {Promise<{ tasks: object[], settings: object }>}
  */
+const RESERVED_SHEETS = new Set(['tasks', 'settings']);
+
 export async function importExcel(file) {
   validateFileType(file);
 
   const data = await file.arrayBuffer();
-  const wb = XLSX.read(data, { type: 'array', cellDates: true });
+  // cellStyles: true is required for SheetJS to parse <cols>/<row ht=...>
+  // metadata back into sheet['!cols'] / sheet['!rows']. Without it the
+  // reader discards column widths and row heights even though they are
+  // present in the .xlsx file.
+  const wb = XLSX.read(data, { type: 'array', cellDates: true, cellStyles: true });
 
   validateTaskHeaders(wb);
 
@@ -131,13 +140,21 @@ export async function importExcel(file) {
 
   const tasks = parseTasksSheet(wb, customCols);
 
-  return { tasks, settings };
+  let tabs = [];
+  try { tabs = JSON.parse(settings.tabs || '[]'); } catch { /* ignore */ }
+
+  let gridCellStyles = {};
+  try { gridCellStyles = JSON.parse(settings.gridCellStyles || '{}'); } catch { /* ignore */ }
+
+  const gridData = parseGridSheets(wb, tabs, gridCellStyles);
+
+  return { tasks, settings, gridData };
 }
 
 /**
- * Build an xlsx workbook from tasks + settings, returned as a Uint8Array.
+ * Build an xlsx workbook from tasks + settings + optional grid data.
  */
-function buildWorkbook(tasks, settings) {
+function buildWorkbook(tasks, settings, gridData) {
   const wb = XLSX.utils.book_new();
 
   let customCols = [];
@@ -185,6 +202,36 @@ function buildWorkbook(tasks, settings) {
   const settingsSheet = XLSX.utils.aoa_to_sheet(settingsRows);
   XLSX.utils.book_append_sheet(wb, settingsSheet, 'Settings');
 
+  let tabs = [];
+  try { tabs = JSON.parse(settings?.tabs || '[]'); } catch { /* ignore */ }
+  if (gridData && tabs.length > 0) {
+    for (const tab of tabs) {
+      const tabData = gridData[tab.id];
+      if (!tabData) continue;
+      const sheetName = sanitizeSheetName(tab.name);
+      const gridSheet = gridDataToSheet(tabData);
+      // Persist column widths in pixels (wpx) so the round-trip is exact.
+      // Only entries that differ from the app default are written; this
+      // lets unresized columns keep their default size on re-import.
+      if (tabData.colWidths) {
+        const maxCol = tabData.cols || 26;
+        gridSheet['!cols'] = Array.from({ length: maxCol }, (_, i) => {
+          const key = colLabelFromIndex(i);
+          const w = tabData.colWidths[key];
+          return w ? { wpx: w } : {};
+        });
+      }
+      if (tabData.rowHeights) {
+        const maxRow = tabData.rows || 50;
+        gridSheet['!rows'] = Array.from({ length: maxRow }, (_, i) => {
+          const h = tabData.rowHeights[i];
+          return h ? { hpx: h, hpt: h } : {};
+        });
+      }
+      XLSX.utils.book_append_sheet(wb, gridSheet, sheetName);
+    }
+  }
+
   return wb;
 }
 
@@ -192,9 +239,10 @@ function buildWorkbook(tasks, settings) {
  * @param {object[]} tasks
  * @param {object} settings
  * @param {string} [filename='GanttGen_Project.xlsx']
+ * @param {object} [gridData]
  */
-export function exportExcel(tasks, settings, filename = 'GanttGen_Project.xlsx') {
-  const wb = buildWorkbook(tasks, settings);
+export function exportExcel(tasks, settings, filename = 'GanttGen_Project.xlsx', gridData) {
+  const wb = buildWorkbook(tasks, settings, gridData);
   XLSX.writeFile(wb, filename);
 }
 
@@ -203,10 +251,11 @@ export function exportExcel(tasks, settings, filename = 'GanttGen_Project.xlsx')
  * Used by the Share feature to embed project data into a standalone HTML file.
  * @param {object[]} tasks
  * @param {object} settings
+ * @param {object} [gridData]
  * @returns {string} base64-encoded xlsx data
  */
-export function exportExcelToBase64(tasks, settings) {
-  const wb = buildWorkbook(tasks, settings);
+export function exportExcelToBase64(tasks, settings, gridData) {
+  const wb = buildWorkbook(tasks, settings, gridData);
   return XLSX.write(wb, { type: 'base64', bookType: 'xlsx' });
 }
 
@@ -349,4 +398,190 @@ function parseExcelDate(value) {
 function formatDate(value) {
   if (!value) return '';
   return String(value);
+}
+
+function colLabelFromIndex(index) {
+  let label = '';
+  let n = index;
+  while (n >= 0) {
+    label = String.fromCharCode(65 + (n % 26)) + label;
+    n = Math.floor(n / 26) - 1;
+  }
+  return label;
+}
+
+function colIndexFromLabel(label) {
+  let idx = 0;
+  for (let i = 0; i < label.length; i++) {
+    idx = idx * 26 + (label.charCodeAt(i) - 64);
+  }
+  return idx - 1;
+}
+
+function parseCellRef(ref) {
+  const match = ref.match(/^([A-Z]+)(\d+)$/);
+  if (!match) return null;
+  return { col: colIndexFromLabel(match[1]), row: parseInt(match[2], 10) - 1 };
+}
+
+function sanitizeSheetName(name) {
+  let safe = String(name).replace(/[\\/*?[\]:]/g, '_').slice(0, 31);
+  if (!safe) safe = 'Sheet';
+  return safe;
+}
+
+function gridDataToSheet(tabData) {
+  const cells = tabData.cells || {};
+  const rowCount = tabData.rows || 50;
+  const colCount = tabData.cols || 26;
+  const tabColWidths = tabData.colWidths || {};
+  const tabRowHeights = tabData.rowHeights || {};
+
+  let maxRow = 0;
+  let maxCol = 0;
+  for (const key of Object.keys(cells)) {
+    const ref = parseCellRef(key);
+    if (!ref) continue;
+    if (ref.row > maxRow) maxRow = ref.row;
+    if (ref.col > maxCol) maxCol = ref.col;
+  }
+
+  // Extend range to cover any columns/rows that have custom widths/heights.
+  // SheetJS drops !cols / !rows entries outside the sheet's !ref, so the
+  // width/height of a resized but otherwise empty column or row would
+  // otherwise be silently discarded at write time.
+  for (const key of Object.keys(tabColWidths)) {
+    const idx = colIndexFromLabel(key);
+    if (Number.isFinite(idx) && idx > maxCol) maxCol = idx;
+  }
+  for (const key of Object.keys(tabRowHeights)) {
+    const idx = parseInt(key, 10);
+    if (Number.isFinite(idx) && idx > maxRow) maxRow = idx;
+  }
+
+  const rows = Math.min(Math.max(maxRow + 1, 1), rowCount);
+  const cols = Math.min(Math.max(maxCol + 1, 1), colCount);
+  const aoa = [];
+
+  for (let r = 0; r < rows; r++) {
+    const row = [];
+    for (let c = 0; c < cols; c++) {
+      const key = `${colLabelFromIndex(c)}${r + 1}`;
+      const cell = cells[key];
+      row.push(cell ? (cell.v ?? '') : '');
+    }
+    aoa.push(row);
+  }
+
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+
+  // Force !ref to span the full range we intend to persist. aoa_to_sheet
+  // tightens !ref to the region containing non-empty values, which can
+  // strand !cols / !rows metadata at the trailing edge.
+  ws['!ref'] = XLSX.utils.encode_range({
+    s: { r: 0, c: 0 },
+    e: { r: rows - 1, c: cols - 1 },
+  });
+
+  // Overwrite cells that have formulas so xlsx writes the `f` field.
+  for (const key of Object.keys(cells)) {
+    const cell = cells[key];
+    if (cell && cell.f) {
+      const ref = parseCellRef(key);
+      if (!ref) continue;
+      const wsKey = XLSX.utils.encode_cell({ r: ref.row, c: ref.col });
+      if (ws[wsKey]) {
+        ws[wsKey].f = cell.f.startsWith('=') ? cell.f.slice(1) : cell.f;
+      } else {
+        ws[wsKey] = { t: 'n', v: cell.v ?? 0, f: cell.f.startsWith('=') ? cell.f.slice(1) : cell.f };
+      }
+    }
+  }
+
+  return ws;
+}
+
+function parseGridSheets(wb, tabs, gridCellStyles = {}) {
+  const gridData = {};
+  if (!tabs || tabs.length === 0) return gridData;
+
+  const tabByName = new Map();
+  for (const tab of tabs) {
+    tabByName.set(tab.name, tab);
+  }
+
+  for (const sheetName of wb.SheetNames) {
+    if (RESERVED_SHEETS.has(sheetName.toLowerCase())) continue;
+    const tab = tabByName.get(sheetName);
+    if (!tab) continue;
+
+    const sheet = wb.Sheets[sheetName];
+    const ref = sheet['!ref'];
+    if (!ref) continue;
+
+    const range = XLSX.utils.decode_range(ref);
+    const cells = {};
+    let maxRow = 0;
+    let maxCol = 0;
+
+    for (let r = range.s.r; r <= range.e.r; r++) {
+      for (let c = range.s.c; c <= range.e.c; c++) {
+        const wsKey = XLSX.utils.encode_cell({ r, c });
+        const wsCell = sheet[wsKey];
+        if (!wsCell) continue;
+
+        const key = `${colLabelFromIndex(c)}${r + 1}`;
+        const cellObj = { v: wsCell.v ?? '' };
+
+        if (wsCell.f) {
+          cellObj.f = '=' + wsCell.f;
+        }
+
+        if (cellObj.v !== '' || cellObj.f) {
+          cells[key] = cellObj;
+          if (r > maxRow) maxRow = r;
+          if (c > maxCol) maxCol = c;
+        }
+      }
+    }
+
+    const tabStyles = gridCellStyles[tab.id];
+    if (tabStyles) {
+      for (const [cellRef, style] of Object.entries(tabStyles)) {
+        if (!cells[cellRef]) cells[cellRef] = { v: '' };
+        cells[cellRef].s = style;
+      }
+    }
+
+    const importedColWidths = {};
+    if (sheet['!cols']) {
+      sheet['!cols'].forEach((col, i) => {
+        if (!col) return;
+        // Prefer pixel width (wpx) for lossless round-trip; fall back to
+        // character width (wch) for files produced by other tools.
+        const px = col.wpx ?? (col.wch != null ? Math.round(col.wch * 7) : null);
+        if (px) importedColWidths[colLabelFromIndex(i)] = px;
+      });
+    }
+
+    const importedRowHeights = {};
+    if (sheet['!rows']) {
+      sheet['!rows'].forEach((row, i) => {
+        if (!row) return;
+        const px = row.hpx ?? row.hpt;
+        if (px) importedRowHeights[i] = px;
+      });
+    }
+
+    gridData[tab.id] = {
+      rows: Math.max(maxRow + 10, 50),
+      cols: Math.max(maxCol + 5, 26),
+      cells,
+      colWidths: importedColWidths,
+      rowHeights: importedRowHeights,
+      showGridLines: true,
+    };
+  }
+
+  return gridData;
 }

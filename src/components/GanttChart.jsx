@@ -1,8 +1,7 @@
 import { useState, useMemo, useRef, useCallback, useEffect } from 'react';
-import { BarChart3, Calendar, CalendarDays, ZoomIn, ZoomOut } from 'lucide-react';
+import { BarChart3 } from 'lucide-react';
 
 const ROW_HEIGHT = 32;
-const TOOLBAR_HEIGHT = 28;
 const MONTH_LABEL_HEIGHT = 16;
 const WEEK_LABEL_HEIGHT = 18;
 const DAY_LABEL_HEIGHT = 18;
@@ -10,10 +9,8 @@ const BAR_HEIGHT = 16;
 const BASELINE_HEIGHT = 4;
 const SUMMARY_HEIGHT = 10;
 
-const ZOOM_DEFAULT = 100;
 const ZOOM_MIN = 25;
 const ZOOM_MAX = 200;
-const ZOOM_STEP = 10;
 const BASE_UNIT_AT_100 = 32;
 // Extra right-side pixels reserved so task name labels that appear after
 // the last bar are not clipped by the SVG boundary.
@@ -24,21 +21,9 @@ function toBool(v) {
   return v !== 'false' && v !== false;
 }
 
-export default function GanttChart({ tasks, allTasks, viewOptions = {}, scrollTop, onScroll, onUpdateTask, onUpdateTaskFields, selectedTaskId, onSelectTask, categoryColors = {}, datePickField, onDatePickField, onBeginDrag, onEndDrag, scale: scaleProp, onScaleChange, zoomPct: zoomPctProp, onZoomChange }) {
-  const scale = scaleProp ?? 'day';
-  const zoomPct = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Number.isFinite(zoomPctProp) ? zoomPctProp : ZOOM_DEFAULT));
-  const zoomPctRef = useRef(zoomPct);
-  zoomPctRef.current = zoomPct;
-  const setScale = useCallback((v) => { if (onScaleChange) onScaleChange(v); }, [onScaleChange]);
-  // Bridge from the existing code's setState-shape API to the controlled onZoomChange callback.
-  // Functional updaters read zoomPct through the ref so this wrapper's identity is stable.
-  const setZoomPct = useCallback((updater) => {
-    if (!onZoomChange) return;
-    const next = typeof updater === 'function' ? updater(zoomPctRef.current) : updater;
-    onZoomChange(next);
-  }, [onZoomChange]);
-  const [zoomInput, setZoomInput] = useState(String(zoomPct));
-  useEffect(() => { setZoomInput(String(zoomPct)); }, [zoomPct]);
+export default function GanttChart({ tasks, allTasks, viewOptions = {}, scrollTop, onScroll, onUpdateTask, onUpdateTaskFields, selectedTaskId, onSelectTask, categoryColors = {}, datePickField, onDatePickField, onBeginDrag, onEndDrag, scale, zoomPct }) {
+  const effectiveScale = scale ?? 'day';
+  const effectiveZoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Number.isFinite(zoomPct) ? zoomPct : 100));
   const [hScrollLeft, setHScrollLeft] = useState(0);
   const [hoveredDate, setHoveredDate] = useState(null);
   const [dragPickStart, setDragPickStart] = useState(null);
@@ -52,7 +37,6 @@ export default function GanttChart({ tasks, allTasks, viewOptions = {}, scrollTo
     dependencies: toBool(viewOptions.showDependencies ?? true),
     todayLine: toBool(viewOptions.showTodayLine ?? true),
     baseline: toBool(viewOptions.showBaseline ?? true),
-    scaleButtons: toBool(viewOptions.showScaleButtons ?? true),
     weekLabels: toBool(viewOptions.showWeekLabels ?? false),
     monthLabels: toBool(viewOptions.showMonthLabels ?? true),
     dayLabels: toBool(viewOptions.showDayLabels ?? true),
@@ -60,40 +44,8 @@ export default function GanttChart({ tasks, allTasks, viewOptions = {}, scrollTo
     progressPercent: toBool(viewOptions.showProgressPercent ?? true),
   };
 
-  const applyZoom = useCallback((pct) => {
-    const clamped = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(pct)));
-    setZoomPct(clamped);
-    setZoomInput(String(clamped));
-  }, []);
-
-  const handleZoomStep = useCallback((direction) => {
-    setZoomPct((prev) => {
-      const next = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, prev + direction * ZOOM_STEP));
-      setZoomInput(String(next));
-      return next;
-    });
-  }, []);
-
-  const handleZoomInputChange = (e) => {
-    const raw = e.target.value;
-    setZoomInput(raw);
-    const parsed = parseInt(raw, 10);
-    if (!isNaN(parsed) && parsed >= ZOOM_MIN && parsed <= ZOOM_MAX) {
-      setZoomPct(parsed);
-    }
-  };
-
-  const handleZoomInputCommit = () => {
-    const parsed = parseInt(zoomInput, 10);
-    if (!isNaN(parsed)) {
-      applyZoom(parsed);
-    } else {
-      setZoomInput(String(zoomPct));
-    }
-  };
-
-  const baseUnit = Math.max(4, Math.round(BASE_UNIT_AT_100 * zoomPct / 100));
-  const unitWidth = scale === 'day' ? baseUnit : Math.round(baseUnit * 0.56);
+  const baseUnit = Math.max(4, Math.round(BASE_UNIT_AT_100 * effectiveZoom / 100));
+  const unitWidth = effectiveScale === 'day' ? baseUnit : Math.round(baseUnit * 0.56);
 
   const { minDate, totalDays } = useMemo(() => {
     const src = allTasks?.length > 0 ? allTasks : tasks;
@@ -251,41 +203,6 @@ export default function GanttChart({ tasks, allTasks, viewOptions = {}, scrollTo
   const chartWidth = Math.max(dataWidth + LABEL_RIGHT_PADDING, containerWidth, 600);
   return (
     <div className="flex flex-col h-full">
-      {/* Toolbar: scale + zoom */}
-      {show.scaleButtons && (
-        <div
-          className="flex items-center gap-2 px-3 flex-shrink-0 justify-between"
-          style={{ height: TOOLBAR_HEIGHT, borderBottom: '1px solid var(--color-border-subtle)', backgroundColor: 'var(--color-bg-secondary)' }}
-        >
-          <div className="flex items-center gap-1">
-            <ScaleButton active={scale === 'day'} onClick={() => setScale('day')} icon={Calendar} label="Day" />
-            <ScaleButton active={scale === 'week'} onClick={() => setScale('week')} icon={CalendarDays} label="Week" />
-          </div>
-          <div className="flex items-center gap-1">
-            <ZoomButton icon={ZoomOut} onClick={() => handleZoomStep(-1)} disabled={zoomPct <= ZOOM_MIN} />
-            <input
-              type="number"
-              value={zoomInput}
-              min={ZOOM_MIN}
-              max={ZOOM_MAX}
-              onChange={handleZoomInputChange}
-              onBlur={handleZoomInputCommit}
-              onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
-              className="tabular-nums text-center font-medium bg-transparent outline-none border-b"
-              style={{
-                width: 38,
-                fontSize: 12,
-                color: 'var(--color-text-secondary)',
-                borderColor: 'var(--color-border)',
-                MozAppearance: 'textfield',
-              }}
-            />
-            <span className="text-[12px]" style={{ color: 'var(--color-text-muted)' }}>%</span>
-            <ZoomButton icon={ZoomIn} onClick={() => handleZoomStep(1)} disabled={zoomPct >= ZOOM_MAX} />
-          </div>
-        </div>
-      )}
-
       {/* Month Labels row */}
       {show.monthLabels && (
         <div className="flex-shrink-0 overflow-hidden" style={{ height: MONTH_LABEL_HEIGHT, backgroundColor: 'var(--color-bg-secondary)', borderBottom: show.weekLabels || show.dayLabels ? '1px solid var(--color-border-subtle)' : '1px solid var(--color-border)' }}>
@@ -298,7 +215,7 @@ export default function GanttChart({ tasks, allTasks, viewOptions = {}, scrollTo
             onMouseMove={handleGridMouseMove}
             onMouseLeave={handleGridMouseLeave}
           >
-            <MonthLabels minDate={minDate} totalDays={totalDays} unitWidth={unitWidth} chartWidth={chartWidth} height={MONTH_LABEL_HEIGHT} scale={scale} />
+            <MonthLabels minDate={minDate} totalDays={totalDays} unitWidth={unitWidth} chartWidth={chartWidth} height={MONTH_LABEL_HEIGHT} scale={effectiveScale} />
           </svg>
         </div>
       )}
@@ -329,7 +246,7 @@ export default function GanttChart({ tasks, allTasks, viewOptions = {}, scrollTo
             onMouseMove={handleGridMouseMove}
             onMouseLeave={handleGridMouseLeave}
           >
-            <DayLabels minDate={minDate} totalDays={totalDays} unitWidth={unitWidth} chartWidth={chartWidth} height={DAY_LABEL_HEIGHT} scale={scale} />
+            <DayLabels minDate={minDate} totalDays={totalDays} unitWidth={unitWidth} chartWidth={chartWidth} height={DAY_LABEL_HEIGHT} scale={effectiveScale} />
             {isPicking && hoveredDate && (
               <HoverDateHighlight date={hoveredDate} minDate={minDate} unitWidth={unitWidth} height={DAY_LABEL_HEIGHT} label={hoveredDateLabel} />
             )}
@@ -355,7 +272,7 @@ export default function GanttChart({ tasks, allTasks, viewOptions = {}, scrollTo
             </pattern>
           </defs>
 
-          <BodyGrid minDate={minDate} totalDays={totalDays} unitWidth={unitWidth} bodyHeight={bodyHeight} chartWidth={chartWidth} scale={scale} />
+          <BodyGrid minDate={minDate} totalDays={totalDays} unitWidth={unitWidth} bodyHeight={bodyHeight} chartWidth={chartWidth} scale={effectiveScale} />
           {isPicking && hoveredDate && (
             <HoverDateHighlight date={hoveredDate} minDate={minDate} unitWidth={unitWidth} height={bodyHeight} />
           )}
@@ -425,26 +342,6 @@ export default function GanttChart({ tasks, allTasks, viewOptions = {}, scrollTo
         </svg>
       </div>
     </div>
-  );
-}
-
-function ScaleButton({ active, onClick, icon: Icon, label }) {
-  return (
-    <button onClick={onClick}
-      className="flex items-center gap-1 px-2 py-0.5 rounded text-[12px] font-medium cursor-pointer transition-colors"
-      style={{ backgroundColor: active ? 'var(--color-accent-muted)' : 'transparent', color: active ? 'var(--color-accent)' : 'var(--color-text-muted)' }}>
-      <Icon size={11} />{label}
-    </button>
-  );
-}
-
-function ZoomButton({ icon: Icon, onClick, disabled }) {
-  return (
-    <button onClick={onClick} disabled={disabled}
-      className="p-0.5 rounded cursor-pointer transition-colors disabled:opacity-30 disabled:cursor-default"
-      style={{ color: 'var(--color-text-muted)' }}>
-      <Icon size={12} />
-    </button>
   );
 }
 

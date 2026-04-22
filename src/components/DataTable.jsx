@@ -11,7 +11,7 @@ import {
 } from 'lucide-react';
 
 const ROW_HEIGHT = 32;
-const HEADER_HEIGHT = 62;
+const HEADER_HEIGHT = 34;
 const MIN_COL_WIDTH = 32;
 
 const STATUS_OPTIONS = [
@@ -73,7 +73,6 @@ export default function DataTable({
   collapsedParents,
   onToggleCollapse,
   onUpdateTask,
-  onAddTask,
   onDeleteTask,
   onReorderTask,
   scrollTop,
@@ -347,7 +346,6 @@ export default function DataTable({
             Import an Excel file or download a template to get started.
           </p>
         </div>
-        <AddRowPill onAddTask={onAddTask} />
       </div>
     );
   }
@@ -506,7 +504,6 @@ export default function DataTable({
           />
         );
       })()}
-      <AddRowPill onAddTask={onAddTask} />
     </div>
   );
 }
@@ -943,25 +940,3 @@ function ColumnPicker({ columns, visibleColumns, onToggle }) {
   );
 }
 
-function AddRowPill({ onAddTask }) {
-  return (
-    <button
-      data-export-exclude
-      onClick={onAddTask}
-      className="absolute flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[13px] font-medium cursor-pointer transition-colors shadow-md"
-      style={{
-        left: 12,
-        bottom: 12,
-        zIndex: 20,
-        color: 'var(--color-text-muted)',
-        backgroundColor: 'var(--color-bg-secondary)',
-        border: '1px solid var(--color-border)',
-      }}
-      onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--color-accent-muted)'; e.currentTarget.style.color = 'var(--color-accent)'; e.currentTarget.style.borderColor = 'var(--color-accent)'; }}
-      onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'var(--color-bg-secondary)'; e.currentTarget.style.color = 'var(--color-text-muted)'; e.currentTarget.style.borderColor = 'var(--color-border)'; }}
-    >
-      <Plus size={12} />
-      Add task
-    </button>
-  );
-}

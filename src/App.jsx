@@ -4,8 +4,10 @@ import { FileUp, X, AlertCircle, Share2, Globe, MousePointerClick, RotateCcw } f
 import Dashboard from './components/Dashboard';
 import DataTable from './components/DataTable';
 import GanttChart from './components/GanttChart';
+import DataGrid from './components/DataGrid';
 import ThemePanel from './components/ThemePanel';
 import GuideOverlay from './components/GuideOverlay';
+import StatusBar from './components/StatusBar';
 import {
   downloadTemplate, importExcel, exportExcel, exportExcelToBase64,
   extractThemeColors, writeThemeColors,
@@ -258,6 +260,9 @@ export default function App() {
   const [colWidths, setColWidths] = useState({});
   const [ganttScale, setGanttScale] = useState('day');
   const [ganttZoom, setGanttZoom] = useState(100);
+  const [activeTab, setActiveTab] = useState('gantt');
+  const [tabs, setTabs] = useState([]);
+  const [gridData, setGridData] = useState({});
   const [datePickField, setDatePickField] = useState(null);
   const [lastSavedAt, setLastSavedAt] = useState(null);
   const [isDirty, setIsDirty] = useState(false);
@@ -278,6 +283,19 @@ export default function App() {
 
   const { pushState, undo, redo, canUndo, canRedo, beginBatch, endBatch } = useUndoRedo();
 
+  const {
+    pushState: pushGridState,
+    undo: undoGrid,
+    redo: redoGrid,
+    canUndo: canUndoGrid,
+    canRedo: canRedoGrid,
+  } = useUndoRedo();
+
+  const gridDataRef = useRef(gridData);
+  gridDataRef.current = gridData;
+  const activeTabRef = useRef(activeTab);
+  activeTabRef.current = activeTab;
+
   const markDirty = useCallback(() => {
     setIsDirty(true);
     isDirtyRef.current = true;
@@ -290,14 +308,24 @@ export default function App() {
   }, [pushState, markDirty]);
 
   const handleUndo = useCallback(() => {
+    if (activeTabRef.current !== 'gantt') {
+      const prev = undoGrid(gridDataRef.current);
+      if (prev) setGridData(prev);
+      return;
+    }
     const prev = undo(tasksRef.current);
     if (prev) setTasks(prev);
-  }, [undo]);
+  }, [undo, undoGrid]);
 
   const handleRedo = useCallback(() => {
+    if (activeTabRef.current !== 'gantt') {
+      const next = redoGrid(gridDataRef.current);
+      if (next) setGridData(next);
+      return;
+    }
     const next = redo(tasksRef.current);
     if (next) setTasks(next);
-  }, [redo]);
+  }, [redo, redoGrid]);
 
   const handleBeginDrag = useCallback(() => {
     beginBatch(tasksRef.current);
@@ -309,12 +337,10 @@ export default function App() {
 
   const skipWeekends = toBool(viewOptions.skipWeekends);
   const prevSkipWeekends = useRef(skipWeekends);
-  const showScaleButtons = toBool(viewOptions.showScaleButtons ?? true);
   const showMonthLabels = toBool(viewOptions.showMonthLabels ?? true);
   const showWeekLabels = toBool(viewOptions.showWeekLabels ?? false);
   const showDayLabels = toBool(viewOptions.showDayLabels ?? true);
   const effectiveHeaderHeight =
-    (showScaleButtons ? 28 : 0) +
     (showMonthLabels ? 16 : 0) +
     (showWeekLabels ? 18 : 0) +
     (showDayLabels ? 18 : 0);
@@ -600,6 +626,53 @@ export default function App() {
     markDirty();
   }, [markDirty]);
 
+  const handleAddTab = useCallback(() => {
+    const id = 'tab_' + Date.now().toString(36);
+    const existingNames = tabs.map((t) => t.name);
+    let name = 'Sheet1';
+    let counter = 1;
+    while (existingNames.includes(name)) {
+      counter++;
+      name = `Sheet${counter}`;
+    }
+    setTabs((prev) => [...prev, { id, name }]);
+    setGridData((prev) => ({
+      ...prev,
+      [id]: { rows: 50, cols: 26, cells: {}, colWidths: {} },
+    }));
+    setActiveTab(id);
+    markDirty();
+  }, [tabs, markDirty]);
+
+  const handleRenameTab = useCallback((tabId, newName) => {
+    const reserved = ['tasks', 'settings'];
+    const trimmed = newName.trim();
+    if (!trimmed || reserved.includes(trimmed.toLowerCase())) return;
+    setTabs((prev) => prev.map((t) => t.id === tabId ? { ...t, name: trimmed } : t));
+    markDirty();
+  }, [markDirty]);
+
+  const handleDeleteTab = useCallback((tabId) => {
+    setTabs((prev) => prev.filter((t) => t.id !== tabId));
+    setGridData((prev) => {
+      const next = { ...prev };
+      delete next[tabId];
+      return next;
+    });
+    if (activeTab === tabId) setActiveTab('gantt');
+    markDirty();
+  }, [activeTab, markDirty]);
+
+  const handleSelectTab = useCallback((tabId) => {
+    setActiveTab(tabId);
+  }, []);
+
+  const handleGridCellChange = useCallback((tabId, newData) => {
+    pushGridState(gridDataRef.current);
+    setGridData((prev) => ({ ...prev, [tabId]: newData }));
+    markDirty();
+  }, [pushGridState, markDirty]);
+
   const handleApplyPreset = useCallback((name, colors) => {
     setActiveTheme(name);
     applyThemeToDOM(colors);
@@ -680,9 +753,24 @@ export default function App() {
       next.colWidths = JSON.stringify(colWidths);
       next.ganttScale = ganttScale;
       next.ganttZoom = String(ganttZoom);
+      next.tabs = JSON.stringify(tabs);
+      next.activeTab = activeTab;
+      const stylesMap = {};
+      for (const tab of tabs) {
+        const tabData = gridData[tab.id];
+        if (!tabData?.cells) continue;
+        const tabStyles = {};
+        for (const [cellRef, cell] of Object.entries(tabData.cells)) {
+          if (cell.s && Object.keys(cell.s).length > 0) {
+            tabStyles[cellRef] = cell.s;
+          }
+        }
+        if (Object.keys(tabStyles).length > 0) stylesMap[tab.id] = tabStyles;
+      }
+      next.gridCellStyles = JSON.stringify(stylesMap);
       return next;
     });
-  }, [viewOptions, visibleColumns, categoryColors, projectName, customColumns, columnOrder, splitRatio, collapsedParents, colWidths, ganttScale, ganttZoom]);
+  }, [viewOptions, visibleColumns, categoryColors, projectName, customColumns, columnOrder, splitRatio, collapsedParents, colWidths, ganttScale, ganttZoom, tabs, activeTab, gridData]);
 
   useEffect(() => {
     const handler = (e) => {
@@ -695,13 +783,18 @@ export default function App() {
         return;
       }
 
+      const tag = e.target?.tagName;
+      const isTextInput = tag === 'INPUT' || tag === 'TEXTAREA';
+
       if (e.key === 'z' && !e.shiftKey) {
+        if (isTextInput) return;
         e.preventDefault();
         handleUndo();
         return;
       }
 
       if ((e.key === 'z' && e.shiftKey) || (e.key === 'Z' && e.shiftKey) || e.key === 'y') {
+        if (isTextInput) return;
         e.preventDefault();
         handleRedo();
       }
@@ -725,6 +818,7 @@ export default function App() {
       const result = await importExcel(file);
       setTasks(result.tasks);
       setSettings(result.settings);
+      setGridData(result.gridData || {});
 
       const s = result.settings;
       setProjectName(s.projectName || '');
@@ -782,6 +876,11 @@ export default function App() {
         : [];
       setColumnOrder(restoredOrder.length > 0 ? restoredOrder : ALL_COLUMNS.map((c) => c.key));
 
+      let restoredTabs = [];
+      try { restoredTabs = JSON.parse(s.tabs || '[]'); } catch { /* ignore */ }
+      setTabs(Array.isArray(restoredTabs) ? restoredTabs : []);
+      setActiveTab(s.activeTab || 'gantt');
+
       let restored = {};
       if (s.categoryColors) {
         try { restored = JSON.parse(s.categoryColors); } catch (_) { /* ignore */ }
@@ -830,7 +929,7 @@ export default function App() {
       return;
     }
 
-    const base64Data = exportExcelToBase64(enrichedTasks, settings);
+    const base64Data = exportExcelToBase64(enrichedTasks, settings, gridData);
 
     // Reconstruct the HTML from the live DOM's <head> (which retains the original inlined
     // <script> and <style> blocks untouched by React) and a clean <body> with an empty #root.
@@ -865,7 +964,7 @@ export default function App() {
     setTimeout(() => URL.revokeObjectURL(url), 30000);
 
     setShareNotice(filename);
-  }, [enrichedTasks, settings, projectName]);
+  }, [enrichedTasks, settings, projectName, gridData]);
 
   const handleDragEnter = useCallback((e) => {
     e.preventDefault();
@@ -901,11 +1000,11 @@ export default function App() {
 
   const handleExport = useCallback(() => {
     const filename = 'GanttGen-' + (projectName.trim() || 'Project').replace(/[^\w\s-]/g, '') + '.xlsx';
-    exportExcel(enrichedTasks, settings, filename);
+    exportExcel(enrichedTasks, settings, filename, gridData);
     setLastSavedAt(new Date());
     setIsDirty(false);
     isDirtyRef.current = false;
-  }, [enrichedTasks, settings, projectName]);
+  }, [enrichedTasks, settings, projectName, gridData]);
   handleExportRef.current = handleExport;
 
   const handleExportPng = useCallback(async (mode) => {
@@ -1003,8 +1102,8 @@ export default function App() {
         onOpenTheme={handleOpenTheme}
         onUndo={handleUndo}
         onRedo={handleRedo}
-        canUndo={canUndo}
-        canRedo={canRedo}
+        canUndo={activeTab !== 'gantt' ? canUndoGrid : canUndo}
+        canRedo={activeTab !== 'gantt' ? canRedoGrid : canRedo}
         viewOptionsOpen={viewOptionsOpen}
         onToggleViewOptions={handleToggleViewOptions}
         viewBtnRef={viewBtnRef}
@@ -1023,83 +1122,103 @@ export default function App() {
         }}
       />
 
-      <div ref={containerRef} className="flex flex-1 min-h-0">
-        <div
-          className="overflow-hidden"
-          data-guide="data-table"
-          style={{
-            width: `${splitRatio * 100}%`,
-            borderRight: '1px solid var(--color-border)',
-          }}
-        >
-          <DataTable
-            tasks={displayTasks}
-            allTasks={enrichedTasks}
-            columns={allColumnsOrdered}
-            visibleColumns={visibleColumns}
-            onAddColumn={handleAddColumn}
-            onReorderColumn={handleReorderColumn}
-            onDeleteColumn={handleDeleteColumn}
-            onToggleColumn={(key) => {
-              setVisibleColumns((prev) => {
-                const next = new Set(prev);
-                if (next.has(key)) next.delete(key);
-                else next.add(key);
-                return next;
-              });
-              markDirty();
+      {activeTab === 'gantt' ? (
+        <div ref={containerRef} className="flex flex-1 min-h-0">
+          <div
+            className="overflow-hidden"
+            data-guide="data-table"
+            style={{
+              width: `${splitRatio * 100}%`,
+              borderRight: '1px solid var(--color-border)',
             }}
-            collapsedParents={collapsedParents}
-            onToggleCollapse={handleToggleCollapse}
-            onUpdateTask={handleUpdateTask}
-            onAddTask={handleAddTask}
-            onDeleteTask={handleDeleteTask}
-            onReorderTask={handleReorderTask}
-            scrollTop={syncScrollTop}
-            onScroll={setSyncScrollTop}
-            selectedTaskId={selectedTaskId}
-            onSelectTask={setSelectedTaskId}
-            headerHeight={effectiveHeaderHeight}
-            datePickField={datePickField}
-            onDatePickField={setDatePickField}
-            onBeginDrag={handleBeginDrag}
-            onEndDrag={handleEndDrag}
-            colWidths={colWidths}
-            onColWidthChange={handleColWidthChange}
+          >
+            <DataTable
+              tasks={displayTasks}
+              allTasks={enrichedTasks}
+              columns={allColumnsOrdered}
+              visibleColumns={visibleColumns}
+              onAddColumn={handleAddColumn}
+              onReorderColumn={handleReorderColumn}
+              onDeleteColumn={handleDeleteColumn}
+              onToggleColumn={(key) => {
+                setVisibleColumns((prev) => {
+                  const next = new Set(prev);
+                  if (next.has(key)) next.delete(key);
+                  else next.add(key);
+                  return next;
+                });
+                markDirty();
+              }}
+              collapsedParents={collapsedParents}
+              onToggleCollapse={handleToggleCollapse}
+              onUpdateTask={handleUpdateTask}
+              onDeleteTask={handleDeleteTask}
+              onReorderTask={handleReorderTask}
+              scrollTop={syncScrollTop}
+              onScroll={setSyncScrollTop}
+              selectedTaskId={selectedTaskId}
+              onSelectTask={setSelectedTaskId}
+              headerHeight={effectiveHeaderHeight}
+              datePickField={datePickField}
+              onDatePickField={setDatePickField}
+              onBeginDrag={handleBeginDrag}
+              onEndDrag={handleEndDrag}
+              colWidths={colWidths}
+              onColWidthChange={handleColWidthChange}
+            />
+          </div>
+
+          <div
+            onMouseDown={handleMouseDown}
+            className="w-1 flex-shrink-0 cursor-col-resize transition-colors"
+            style={{ backgroundColor: 'var(--color-border)' }}
+            onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--color-accent)')}
+            onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'var(--color-border)')}
+          />
+
+          <div ref={chartRef} className="flex-1 min-w-0 overflow-hidden" data-guide="gantt-chart">
+            <GanttChart
+              tasks={displayTasks}
+              allTasks={enrichedTasks}
+              viewOptions={viewOptions}
+              scrollTop={syncScrollTop}
+              onScroll={setSyncScrollTop}
+              onUpdateTask={handleUpdateTask}
+              onUpdateTaskFields={handleUpdateTaskFields}
+              selectedTaskId={selectedTaskId}
+              onSelectTask={setSelectedTaskId}
+              categoryColors={categoryColors}
+              datePickField={datePickField}
+              onDatePickField={setDatePickField}
+              onBeginDrag={handleBeginDrag}
+              onEndDrag={handleEndDrag}
+              scale={ganttScale}
+              zoomPct={ganttZoom}
+            />
+          </div>
+        </div>
+      ) : (
+        <div className="flex-1 min-h-0">
+          <DataGrid
+            data={gridData[activeTab]}
+            onChange={(newData) => handleGridCellChange(activeTab, newData)}
           />
         </div>
+      )}
 
-        <div
-          onMouseDown={handleMouseDown}
-          className="w-1 flex-shrink-0 cursor-col-resize transition-colors"
-          style={{ backgroundColor: 'var(--color-border)' }}
-          onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--color-accent)')}
-          onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'var(--color-border)')}
-        />
-
-        <div ref={chartRef} className="flex-1 min-w-0 overflow-hidden" data-guide="gantt-chart">
-          <GanttChart
-            tasks={displayTasks}
-            allTasks={enrichedTasks}
-            viewOptions={viewOptions}
-            scrollTop={syncScrollTop}
-            onScroll={setSyncScrollTop}
-            onUpdateTask={handleUpdateTask}
-            onUpdateTaskFields={handleUpdateTaskFields}
-            selectedTaskId={selectedTaskId}
-            onSelectTask={setSelectedTaskId}
-            categoryColors={categoryColors}
-            datePickField={datePickField}
-            onDatePickField={setDatePickField}
-            onBeginDrag={handleBeginDrag}
-            onEndDrag={handleEndDrag}
-            scale={ganttScale}
-            onScaleChange={handleGanttScaleChange}
-            zoomPct={ganttZoom}
-            onZoomChange={handleGanttZoomChange}
-          />
-        </div>
-      </div>
+      <StatusBar
+        onAddTask={handleAddTask}
+        scale={ganttScale}
+        onScaleChange={handleGanttScaleChange}
+        zoomPct={ganttZoom}
+        onZoomChange={handleGanttZoomChange}
+        activeTab={activeTab}
+        tabs={tabs}
+        onSelectTab={handleSelectTab}
+        onAddTab={handleAddTab}
+        onRenameTab={handleRenameTab}
+        onDeleteTab={handleDeleteTab}
+      />
 
       <ThemePanel
         open={themePanelOpen}

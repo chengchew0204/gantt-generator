@@ -26,3 +26,6 @@ AGENTS.md
 *.njsproj
 *.sln
 *.sw?
+
+# Windows NTFS alternate data streams
+*:Zone.Identifier
