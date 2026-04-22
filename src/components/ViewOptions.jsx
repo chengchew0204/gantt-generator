@@ -9,7 +9,6 @@ const CHART_TOGGLES = [
   { key: 'showTaskNames', label: 'Task Names' },
   { key: 'showProgressPercent', label: 'Progress %' },
   { key: 'skipWeekends', label: 'Skip Weekends (working days)' },
-  { key: 'showScaleButtons', label: 'Day/Week Scale Buttons' },
   { key: 'showWeekLabels', label: 'Week Labels' },
   { key: 'showMonthLabels', label: 'Month Labels' },
   { key: 'showDayLabels', label: 'Day/Date Labels' },
