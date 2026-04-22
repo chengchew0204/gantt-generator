@@ -48,6 +48,8 @@ const SETTINGS_FIELDS = [
   { key: 'showDayLabels', label: 'Show Day Labels', defaultValue: 'true' },
   { key: 'visibleColumns', label: 'Visible Columns', defaultValue: 'id,name,duration,startDate,endDate,progress,status,owner' },
   { key: 'categoryColors', label: 'Category Colors', defaultValue: '{}' },
+  { key: 'customColumns', label: 'Custom Columns', defaultValue: '[]' },
+  { key: 'columnOrder', label: 'Column Order', defaultValue: '' },
 ];
 
 export function downloadTemplate() {
@@ -117,8 +119,12 @@ export async function importExcel(file) {
 
   validateTaskHeaders(wb);
 
-  const tasks = parseTasksSheet(wb);
   const settings = parseSettingsSheet(wb);
+
+  let customCols = [];
+  try { customCols = JSON.parse(settings.customColumns || '[]'); } catch { /* ignore */ }
+
+  const tasks = parseTasksSheet(wb, customCols);
 
   return { tasks, settings };
 }
@@ -129,26 +135,35 @@ export async function importExcel(file) {
 function buildWorkbook(tasks, settings) {
   const wb = XLSX.utils.book_new();
 
-  const taskRows = tasks.map((t) => [
-    t.id ?? '',
-    t.name ?? '',
-    t.dependency ?? '',
-    t.category ?? '',
-    formatDate(t.startDate),
-    formatDate(t.endDate),
-    t.duration ?? '',
-    t.progress ?? '',
-    t.status ?? '',
-    t.owner ?? '',
-    t.remarks ?? '',
-    formatDate(t.baselineStart),
-    formatDate(t.baselineEnd),
-    t.parentId ?? '',
-  ]);
-  taskRows.unshift(TASK_COLUMNS);
+  let customCols = [];
+  try { customCols = JSON.parse(settings?.customColumns || '[]'); } catch { /* ignore */ }
+
+  const allHeaders = [...TASK_COLUMNS, ...customCols.map((c) => c.label)];
+
+  const taskRows = tasks.map((t) => {
+    const row = [
+      t.id ?? '',
+      t.name ?? '',
+      t.dependency ?? '',
+      t.category ?? '',
+      formatDate(t.startDate),
+      formatDate(t.endDate),
+      t.duration ?? '',
+      t.progress ?? '',
+      t.status ?? '',
+      t.owner ?? '',
+      t.remarks ?? '',
+      formatDate(t.baselineStart),
+      formatDate(t.baselineEnd),
+      t.parentId ?? '',
+    ];
+    for (const cc of customCols) row.push(t[cc.key] ?? '');
+    return row;
+  });
+  taskRows.unshift(allHeaders);
 
   const taskSheet = XLSX.utils.aoa_to_sheet(taskRows);
-  const colWidths = TASK_COLUMNS.map((col) => ({
+  const colWidths = allHeaders.map((col) => ({
     wch: Math.max(col.length + 2, 14),
   }));
   taskSheet['!cols'] = colWidths;
@@ -241,7 +256,7 @@ export function writeThemeColors(settings, colors) {
   };
 }
 
-function parseTasksSheet(wb) {
+function parseTasksSheet(wb, customCols = []) {
   const sheetName = wb.SheetNames.find(
     (n) => n.toLowerCase() === 'tasks',
   );
@@ -250,22 +265,28 @@ function parseTasksSheet(wb) {
   const sheet = wb.Sheets[sheetName];
   const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
 
-  return rows.map((row) => ({
-    id: String(row['Task ID'] ?? ''),
-    name: row['Task Name'] ?? '',
-    dependency: String(row['Dependency'] ?? ''),
-    category: row['Task Category'] ?? '',
-    startDate: parseExcelDate(row['Start Date']),
-    endDate: parseExcelDate(row['End Date']),
-    duration: row['Duration'] !== '' ? Number(row['Duration']) : 0,
-    progress: row['Progress (%)'] !== '' ? Number(row['Progress (%)']) : 0,
-    status: row['Status'] ?? '',
-    owner: row['Owner'] ?? '',
-    remarks: row['Remarks'] ?? '',
-    baselineStart: parseExcelDate(row['Baseline Start']),
-    baselineEnd: parseExcelDate(row['Baseline End']),
-    parentId: String(row['Parent ID'] ?? ''),
-  }));
+  return rows.map((row) => {
+    const task = {
+      id: String(row['Task ID'] ?? ''),
+      name: row['Task Name'] ?? '',
+      dependency: String(row['Dependency'] ?? ''),
+      category: row['Task Category'] ?? '',
+      startDate: parseExcelDate(row['Start Date']),
+      endDate: parseExcelDate(row['End Date']),
+      duration: row['Duration'] !== '' ? Number(row['Duration']) : 0,
+      progress: row['Progress (%)'] !== '' ? Number(row['Progress (%)']) : 0,
+      status: row['Status'] ?? '',
+      owner: row['Owner'] ?? '',
+      remarks: row['Remarks'] ?? '',
+      baselineStart: parseExcelDate(row['Baseline Start']),
+      baselineEnd: parseExcelDate(row['Baseline End']),
+      parentId: String(row['Parent ID'] ?? ''),
+    };
+    for (const cc of customCols) {
+      task[cc.key] = row[cc.label] ?? '';
+    }
+    return task;
+  });
 }
 
 function parseSettingsSheet(wb) {
