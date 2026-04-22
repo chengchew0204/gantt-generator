@@ -110,7 +110,7 @@ export default function Dashboard({
             </span>
             <span className="text-[10px] px-1 py-px rounded font-medium"
               style={{ backgroundColor: 'var(--color-accent-muted)', color: 'var(--color-accent)' }}>
-              v1.0.1
+              v1.2
             </span>
           </div>
           <span style={{ color: 'var(--color-border)' }}>/</span>

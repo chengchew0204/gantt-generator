@@ -24,10 +24,21 @@ function toBool(v) {
   return v !== 'false' && v !== false;
 }
 
-export default function GanttChart({ tasks, allTasks, viewOptions = {}, scrollTop, onScroll, onUpdateTask, onUpdateTaskFields, selectedTaskId, onSelectTask, categoryColors = {}, datePickField, onDatePickField, onBeginDrag, onEndDrag }) {
-  const [scale, setScale] = useState('day');
-  const [zoomPct, setZoomPct] = useState(ZOOM_DEFAULT);
-  const [zoomInput, setZoomInput] = useState(String(ZOOM_DEFAULT));
+export default function GanttChart({ tasks, allTasks, viewOptions = {}, scrollTop, onScroll, onUpdateTask, onUpdateTaskFields, selectedTaskId, onSelectTask, categoryColors = {}, datePickField, onDatePickField, onBeginDrag, onEndDrag, scale: scaleProp, onScaleChange, zoomPct: zoomPctProp, onZoomChange }) {
+  const scale = scaleProp ?? 'day';
+  const zoomPct = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Number.isFinite(zoomPctProp) ? zoomPctProp : ZOOM_DEFAULT));
+  const zoomPctRef = useRef(zoomPct);
+  zoomPctRef.current = zoomPct;
+  const setScale = useCallback((v) => { if (onScaleChange) onScaleChange(v); }, [onScaleChange]);
+  // Bridge from the existing code's setState-shape API to the controlled onZoomChange callback.
+  // Functional updaters read zoomPct through the ref so this wrapper's identity is stable.
+  const setZoomPct = useCallback((updater) => {
+    if (!onZoomChange) return;
+    const next = typeof updater === 'function' ? updater(zoomPctRef.current) : updater;
+    onZoomChange(next);
+  }, [onZoomChange]);
+  const [zoomInput, setZoomInput] = useState(String(zoomPct));
+  useEffect(() => { setZoomInput(String(zoomPct)); }, [zoomPct]);
   const [hScrollLeft, setHScrollLeft] = useState(0);
   const [hoveredDate, setHoveredDate] = useState(null);
   const [dragPickStart, setDragPickStart] = useState(null);

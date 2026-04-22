@@ -33,20 +33,25 @@ function labelWidth(label) {
   return Math.ceil(String(label).length * HEADER_CHAR_PX + HEADER_PAD);
 }
 
+// Date cells render "YYYY-MM-DD" (10 chars). Ensure every date column is wide
+// enough for the value, not just the label (e.g. "End Date" label is only 8 chars
+// but the value below it is 10 chars and would otherwise truncate).
+const DATE_CELL_WIDTH = Math.max(labelWidth('YYYY-MM-DD'), labelWidth('Start Date'));
+
 const DEFAULT_COL_WIDTHS = {
   id: 32,
   name: 120,
   dependency: labelWidth('Dependency'),
   category: labelWidth('Category'),
-  startDate: labelWidth('Start Date'),
-  endDate: labelWidth('End Date'),
+  startDate: Math.max(labelWidth('Start Date'), DATE_CELL_WIDTH),
+  endDate: Math.max(labelWidth('End Date'), DATE_CELL_WIDTH),
   duration: labelWidth('Duration'),
   progress: labelWidth('Progress (%)'),
   status: Math.max(labelWidth('Status'), STATUS_SELECT_WIDTH_PX + 4),
   owner: labelWidth('Owner') + 16,
   remarks: labelWidth('Remarks'),
-  baselineStart: labelWidth('Baseline Start'),
-  baselineEnd: labelWidth('Baseline End'),
+  baselineStart: Math.max(labelWidth('Baseline Start'), DATE_CELL_WIDTH),
+  baselineEnd: Math.max(labelWidth('Baseline End'), DATE_CELL_WIDTH),
   parentId: labelWidth('Parent ID'),
 };
 
@@ -80,11 +85,15 @@ export default function DataTable({
   onDatePickField,
   onBeginDrag,
   onEndDrag,
+  colWidths: colWidthsProp,
+  onColWidthChange,
 }) {
   const headerH = headerHeightProp || HEADER_HEIGHT;
   const [showColumnPicker, setShowColumnPicker] = useState(false);
   const [hScrollLeft, setHScrollLeft] = useState(0);
-  const [colWidths, setColWidths] = useState(DEFAULT_COL_WIDTHS);
+  // Merge persisted widths on top of defaults. Any column the user has not yet
+  // resized falls back to DEFAULT_COL_WIDTHS via getColW().
+  const colWidths = colWidthsProp || {};
   const [dragIndex, setDragIndex] = useState(null);
   const [dropIndex, setDropIndex] = useState(null);
   const [editingCell, setEditingCell] = useState(null);
@@ -247,7 +256,7 @@ export default function DataTable({
     const onMove = (e) => {
       const minW = colKey === 'status' ? STATUS_SELECT_WIDTH_PX : MIN_COL_WIDTH;
       const newW = Math.max(minW, startWidth + (e.clientX - startX));
-      setColWidths((prev) => ({ ...prev, [colKey]: newW }));
+      if (onColWidthChange) onColWidthChange(colKey, newW);
     };
     const onUp = () => {
       document.removeEventListener('mousemove', onMove);
@@ -259,7 +268,7 @@ export default function DataTable({
     document.body.style.userSelect = 'none';
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
-  }, []);
+  }, [onColWidthChange]);
 
   const handleDragStart = useCallback((index, e) => {
     e.preventDefault();
