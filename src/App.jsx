@@ -253,6 +253,8 @@ export default function App() {
   const [selectedTaskId, setSelectedTaskId] = useState(null);
   const [categoryColors, setCategoryColors] = useState({});
   const [projectName, setProjectName] = useState('');
+  const [customColumns, setCustomColumns] = useState([]);
+  const [columnOrder, setColumnOrder] = useState(() => ALL_COLUMNS.map((c) => c.key));
   const [datePickField, setDatePickField] = useState(null);
   const [lastSavedAt, setLastSavedAt] = useState(null);
   const [isDirty, setIsDirty] = useState(false);
@@ -313,6 +315,14 @@ export default function App() {
     (showMonthLabels ? 16 : 0) +
     (showWeekLabels ? 18 : 0) +
     (showDayLabels ? 18 : 0);
+
+  const allColumnsOrdered = useMemo(() => {
+    const colMap = new Map([
+      ...ALL_COLUMNS.map((c) => [c.key, c]),
+      ...customColumns.map((c) => [c.key, c]),
+    ]);
+    return columnOrder.filter((k) => colMap.has(k)).map((k) => colMap.get(k));
+  }, [columnOrder, customColumns]);
 
   const wbsTasks = useMemo(() => buildWbsTree(tasks, skipWeekends), [tasks, skipWeekends]);
 
@@ -465,9 +475,10 @@ export default function App() {
         baselineStart: null,
         baselineEnd: null,
         parentId: '',
+        ...Object.fromEntries(customColumns.map((cc) => [cc.key, ''])),
       },
     ]);
-  }, [recordAndSetTasks]);
+  }, [recordAndSetTasks, customColumns]);
 
   const handleDeleteTask = useCallback((taskId) => {
     recordAndSetTasks((prev) => prev.filter((t) => String(t.id) !== String(taskId)));
@@ -516,6 +527,59 @@ export default function App() {
       return next;
     });
   }, []);
+
+  const handleAddColumn = useCallback((label) => {
+    const key = 'custom_' + Date.now().toString(36);
+    const col = { key, label, type: 'text' };
+    setCustomColumns((prev) => [...prev, col]);
+    setColumnOrder((prev) => [...prev, key]);
+    setVisibleColumns((prev) => {
+      const next = new Set(prev);
+      next.add(key);
+      return next;
+    });
+    markDirty();
+  }, [markDirty]);
+
+  const handleReorderColumn = useCallback((fromKey, targetKey) => {
+    if (fromKey === targetKey) return;
+    setColumnOrder((prev) => {
+      const arr = [...prev];
+      const fromIdx = arr.indexOf(fromKey);
+      if (fromIdx === -1) return prev;
+      arr.splice(fromIdx, 1);
+      if (targetKey == null) {
+        arr.push(fromKey);
+      } else {
+        const insertIdx = arr.indexOf(targetKey);
+        if (insertIdx === -1) {
+          arr.push(fromKey);
+        } else {
+          arr.splice(insertIdx, 0, fromKey);
+        }
+      }
+      return arr;
+    });
+    markDirty();
+  }, [markDirty]);
+
+  const handleDeleteColumn = useCallback((key) => {
+    setCustomColumns((prev) => prev.filter((c) => c.key !== key));
+    setColumnOrder((prev) => prev.filter((k) => k !== key));
+    setVisibleColumns((prev) => {
+      const next = new Set(prev);
+      next.delete(key);
+      return next;
+    });
+    setTasks((prev) =>
+      prev.map((t) => {
+        const updated = { ...t };
+        delete updated[key];
+        return updated;
+      }),
+    );
+    markDirty();
+  }, [markDirty]);
 
   const handleApplyPreset = useCallback((name, colors) => {
     setActiveTheme(name);
@@ -590,9 +654,11 @@ export default function App() {
       next.visibleColumns = [...visibleColumns].join(',');
       next.categoryColors = JSON.stringify(categoryColors);
       next.projectName = projectName;
+      next.customColumns = JSON.stringify(customColumns);
+      next.columnOrder = columnOrder.join(',');
       return next;
     });
-  }, [viewOptions, visibleColumns, categoryColors, projectName]);
+  }, [viewOptions, visibleColumns, categoryColors, projectName, customColumns, columnOrder]);
 
   useEffect(() => {
     const handler = (e) => {
@@ -662,6 +728,15 @@ export default function App() {
         const cols = s.visibleColumns.split(',').map((c) => c.trim()).filter(Boolean);
         if (cols.length > 0) setVisibleColumns(new Set(cols));
       }
+
+      let restoredCustomCols = [];
+      try { restoredCustomCols = JSON.parse(s.customColumns || '[]'); } catch { /* ignore */ }
+      setCustomColumns(restoredCustomCols);
+
+      const restoredOrder = s.columnOrder
+        ? s.columnOrder.split(',').map((c) => c.trim()).filter(Boolean)
+        : [];
+      setColumnOrder(restoredOrder.length > 0 ? restoredOrder : ALL_COLUMNS.map((c) => c.key));
 
       let restored = {};
       if (s.categoryColors) {
@@ -888,7 +963,7 @@ export default function App() {
         viewBtnRef={viewBtnRef}
         viewOptions={viewOptions}
         onToggleViewOption={handleToggleViewOption}
-        columns={ALL_COLUMNS}
+        columns={allColumnsOrdered}
         visibleColumns={visibleColumns}
         onToggleColumn={(key) => {
           setVisibleColumns((prev) => {
@@ -913,8 +988,11 @@ export default function App() {
           <DataTable
             tasks={displayTasks}
             allTasks={enrichedTasks}
-            columns={ALL_COLUMNS}
+            columns={allColumnsOrdered}
             visibleColumns={visibleColumns}
+            onAddColumn={handleAddColumn}
+            onReorderColumn={handleReorderColumn}
+            onDeleteColumn={handleDeleteColumn}
             onToggleColumn={(key) => {
               setVisibleColumns((prev) => {
                 const next = new Set(prev);

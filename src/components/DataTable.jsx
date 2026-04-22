@@ -7,6 +7,7 @@ import {
   ChevronDown,
   Columns3,
   GripVertical,
+  X,
 } from 'lucide-react';
 
 const ROW_HEIGHT = 32;
@@ -49,8 +50,10 @@ const DEFAULT_COL_WIDTHS = {
   parentId: labelWidth('Parent ID'),
 };
 
-function getColW(widths, key) {
-  return widths[key] ?? DEFAULT_COL_WIDTHS[key] ?? 60;
+function getColW(widths, col) {
+  const key = typeof col === 'string' ? col : col.key;
+  const label = typeof col === 'string' ? null : col.label;
+  return widths[key] ?? DEFAULT_COL_WIDTHS[key] ?? (label ? Math.max(labelWidth(label), 60) : 60);
 }
 
 export default function DataTable({
@@ -58,6 +61,9 @@ export default function DataTable({
   allTasks,
   columns,
   visibleColumns,
+  onAddColumn,
+  onReorderColumn,
+  onDeleteColumn,
   onToggleColumn,
   collapsedParents,
   onToggleCollapse,
@@ -82,10 +88,18 @@ export default function DataTable({
   const [dragIndex, setDragIndex] = useState(null);
   const [dropIndex, setDropIndex] = useState(null);
   const [editingCell, setEditingCell] = useState(null);
+  const [addingColumn, setAddingColumn] = useState(false);
+  const [newColLabel, setNewColLabel] = useState('');
+  const [colDragKey, setColDragKey] = useState(null);
+  const [colDropIdx, setColDropIdx] = useState(null);
+  const colDragKeyRef = useRef(null);
+  const colDropIdxRef = useRef(null);
+  const addColInputRef = useRef(null);
   const dragRef = useRef(null);
   const dropRef = useRef(null);
   const pickerRef = useRef(null);
   const scrollRef = useRef(null);
+  const headerScrollRef = useRef(null);
   const suppressScroll = useRef(false);
 
   const cols = columns.filter((c) => visibleColumns.has(c.key));
@@ -129,6 +143,72 @@ export default function DataTable({
     }
     setEditingCell(null);
   }, [cols, tasks, onSelectTask]);
+
+  useEffect(() => {
+    if (addingColumn && addColInputRef.current) {
+      addColInputRef.current.focus();
+    }
+  }, [addingColumn]);
+
+  const commitAddColumn = useCallback(() => {
+    const label = newColLabel.trim();
+    setAddingColumn(false);
+    setNewColLabel('');
+    if (label && onAddColumn) onAddColumn(label);
+  }, [newColLabel, onAddColumn]);
+
+  const handleColDragStart = useCallback((colKey, e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const dragIdx = cols.findIndex((c) => c.key === colKey);
+    setColDragKey(colKey);
+    setColDropIdx(dragIdx);
+    colDragKeyRef.current = colKey;
+    colDropIdxRef.current = dragIdx;
+
+    const onMove = (ev) => {
+      const headerEl = headerScrollRef.current;
+      if (!headerEl) return;
+      const cells = headerEl.querySelectorAll('[data-col-key]');
+      let newDropIdx = cols.length;
+      for (let i = 0; i < cells.length; i++) {
+        const rect = cells[i].getBoundingClientRect();
+        const midX = rect.left + rect.width / 2;
+        if (ev.clientX < midX) {
+          newDropIdx = i;
+          break;
+        }
+      }
+      colDropIdxRef.current = newDropIdx;
+      setColDropIdx(newDropIdx);
+    };
+
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+
+      const fromKey = colDragKeyRef.current;
+      const dropAt = colDropIdxRef.current;
+      if (fromKey != null && dropAt != null && onReorderColumn) {
+        const fromIdx = cols.findIndex((c) => c.key === fromKey);
+        if (fromIdx !== -1 && dropAt !== fromIdx && dropAt !== fromIdx + 1) {
+          const targetKey = dropAt < cols.length ? cols[dropAt].key : null;
+          onReorderColumn(fromKey, targetKey);
+        }
+      }
+      colDragKeyRef.current = null;
+      colDropIdxRef.current = null;
+      setColDragKey(null);
+      setColDropIdx(null);
+    };
+
+    document.body.style.cursor = 'grabbing';
+    document.body.style.userSelect = 'none';
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }, [cols, onReorderColumn]);
 
   useEffect(() => {
     if (!showColumnPicker) return;
@@ -263,7 +343,7 @@ export default function DataTable({
     );
   }
 
-  const totalMinWidth = 32 + 32 + cols.reduce((sum, c) => sum + getColW(colWidths, c.key), 0);
+  const totalMinWidth = 32 + 32 + cols.reduce((sum, c) => sum + getColW(colWidths, c), 0);
 
   return (
     <div className="flex flex-col h-full relative">
@@ -279,6 +359,7 @@ export default function DataTable({
         {/* Column labels — clipped so horizontal-scroll translation stays within bounds */}
         <div className="absolute inset-0 overflow-hidden" style={{ right: 32 }}>
           <div
+            ref={headerScrollRef}
             className="flex items-center text-[13px] font-medium whitespace-nowrap h-full"
             style={{ minWidth: totalMinWidth, color: 'var(--color-text-muted)', transform: `translateX(${-hScrollLeft}px)` }}
           >
@@ -287,10 +368,47 @@ export default function DataTable({
               <ResizableHeaderCell
                 key={col.key}
                 col={col}
-                width={getColW(colWidths, col.key)}
+                width={getColW(colWidths, col)}
                 onResizeStart={handleResizeCol}
+                onColDragStart={handleColDragStart}
+                onDeleteColumn={onDeleteColumn}
+                isDragging={colDragKey === col.key}
               />
             ))}
+            {addingColumn ? (
+              <div className="flex-shrink-0 flex items-center px-1">
+                <input
+                  ref={addColInputRef}
+                  type="text"
+                  value={newColLabel}
+                  onChange={(e) => setNewColLabel(e.target.value)}
+                  onBlur={commitAddColumn}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') commitAddColumn();
+                    if (e.key === 'Escape') { setAddingColumn(false); setNewColLabel(''); }
+                  }}
+                  placeholder="Column name"
+                  className="text-[12px] outline-none px-1.5 py-0.5 rounded"
+                  style={{
+                    width: 100,
+                    backgroundColor: 'var(--color-bg-tertiary)',
+                    color: 'var(--color-text-primary)',
+                    border: '1px solid var(--color-accent)',
+                  }}
+                />
+              </div>
+            ) : (
+              <button
+                onClick={() => setAddingColumn(true)}
+                className="flex-shrink-0 flex items-center justify-center w-6 h-6 rounded cursor-pointer transition-colors ml-1"
+                style={{ color: 'var(--color-text-muted)' }}
+                onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--color-accent)'; e.currentTarget.style.backgroundColor = 'var(--color-accent-muted)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--color-text-muted)'; e.currentTarget.style.backgroundColor = 'transparent'; }}
+                title="Add custom column"
+              >
+                <Plus size={12} />
+              </button>
+            )}
             <div className="flex-1" />
           </div>
         </div>
@@ -357,13 +475,38 @@ export default function DataTable({
           )}
         </div>
       </div>
+      {colDragKey != null && colDropIdx != null && (() => {
+        const dragIdx = cols.findIndex((c) => c.key === colDragKey);
+        if (colDropIdx === dragIdx || colDropIdx === dragIdx + 1) return null;
+        let xOffset = 32;
+        for (let i = 0; i < colDropIdx && i < cols.length; i++) {
+          xOffset += getColW(colWidths, cols[i]);
+        }
+        return (
+          <div
+            style={{
+              position: 'absolute',
+              top: 0,
+              bottom: 0,
+              left: xOffset - hScrollLeft,
+              width: 2,
+              backgroundColor: 'var(--color-accent)',
+              zIndex: 40,
+              pointerEvents: 'none',
+            }}
+          />
+        );
+      })()}
       <AddRowPill onAddTask={onAddTask} />
     </div>
   );
 }
 
-function ResizableHeaderCell({ col, width, onResizeStart }) {
-  const handleMouseDown = (e) => {
+function ResizableHeaderCell({ col, width, onResizeStart, onColDragStart, onDeleteColumn, isDragging }) {
+  const [hovered, setHovered] = useState(false);
+  const isCustom = col.key.startsWith('custom_');
+
+  const handleResizeMouseDown = (e) => {
     e.preventDefault();
     e.stopPropagation();
     onResizeStart(col.key, e.clientX, width);
@@ -371,12 +514,40 @@ function ResizableHeaderCell({ col, width, onResizeStart }) {
 
   return (
     <div
-      className="flex-shrink-0 relative flex items-center"
-      style={{ width, maxWidth: width }}
+      data-col-key={col.key}
+      className="flex-shrink-0 relative flex items-center group"
+      style={{
+        width,
+        maxWidth: width,
+        opacity: isDragging ? 0.4 : 1,
+      }}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
     >
-      <span className="px-2 truncate flex-1 min-w-0" title={col.label}>{col.label}</span>
+      {hovered && (
+        <div
+          onMouseDown={(e) => onColDragStart(col.key, e)}
+          className="flex-shrink-0 ml-0.5 cursor-grab"
+          style={{ color: 'var(--color-text-muted)' }}
+        >
+          <GripVertical size={10} />
+        </div>
+      )}
+      <span className="px-1.5 truncate flex-1 min-w-0" title={col.label}>{col.label}</span>
+      {isCustom && hovered && onDeleteColumn && (
+        <button
+          onClick={(e) => { e.stopPropagation(); onDeleteColumn(col.key); }}
+          className="flex-shrink-0 mr-1 p-0.5 rounded cursor-pointer transition-colors"
+          style={{ color: 'var(--color-text-muted)' }}
+          onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--color-danger)'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--color-text-muted)'; }}
+          title={`Remove "${col.label}"`}
+        >
+          <X size={10} />
+        </button>
+      )}
       <div
-        onMouseDown={handleMouseDown}
+        onMouseDown={handleResizeMouseDown}
         className="absolute right-0 top-0 h-full w-[5px] cursor-col-resize z-10"
         style={{ borderRight: '1px solid var(--color-border-subtle)' }}
       />
@@ -460,7 +631,7 @@ function TaskRow({
         ) : null}
       </div>
       {cols.map((col) => {
-        const w = getColW(colWidths, col.key);
+        const w = getColW(colWidths, col);
         const isCellEditing = editingCell && editingCell.rowIndex === index && editingCell.colKey === col.key;
         return (
           <div key={col.key} className="flex-shrink-0 overflow-hidden" style={{ width: w, maxWidth: w }}>
