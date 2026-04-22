@@ -255,6 +255,9 @@ export default function App() {
   const [projectName, setProjectName] = useState('');
   const [customColumns, setCustomColumns] = useState([]);
   const [columnOrder, setColumnOrder] = useState(() => ALL_COLUMNS.map((c) => c.key));
+  const [colWidths, setColWidths] = useState({});
+  const [ganttScale, setGanttScale] = useState('day');
+  const [ganttZoom, setGanttZoom] = useState(100);
   const [datePickField, setDatePickField] = useState(null);
   const [lastSavedAt, setLastSavedAt] = useState(null);
   const [isDirty, setIsDirty] = useState(false);
@@ -526,7 +529,23 @@ export default function App() {
       else next.add(parentId);
       return next;
     });
-  }, []);
+    markDirty();
+  }, [markDirty]);
+
+  const handleColWidthChange = useCallback((colKey, newW) => {
+    setColWidths((prev) => ({ ...prev, [colKey]: newW }));
+    markDirty();
+  }, [markDirty]);
+
+  const handleGanttScaleChange = useCallback((v) => {
+    setGanttScale(v);
+    markDirty();
+  }, [markDirty]);
+
+  const handleGanttZoomChange = useCallback((v) => {
+    setGanttZoom(v);
+    markDirty();
+  }, [markDirty]);
 
   const handleAddColumn = useCallback((label) => {
     const key = 'custom_' + Date.now().toString(36);
@@ -656,9 +675,14 @@ export default function App() {
       next.projectName = projectName;
       next.customColumns = JSON.stringify(customColumns);
       next.columnOrder = columnOrder.join(',');
+      next.splitRatio = String(splitRatio);
+      next.collapsedParents = [...collapsedParents].join(',');
+      next.colWidths = JSON.stringify(colWidths);
+      next.ganttScale = ganttScale;
+      next.ganttZoom = String(ganttZoom);
       return next;
     });
-  }, [viewOptions, visibleColumns, categoryColors, projectName, customColumns, columnOrder]);
+  }, [viewOptions, visibleColumns, categoryColors, projectName, customColumns, columnOrder, splitRatio, collapsedParents, colWidths, ganttScale, ganttZoom]);
 
   useEffect(() => {
     const handler = (e) => {
@@ -701,10 +725,30 @@ export default function App() {
       const result = await importExcel(file);
       setTasks(result.tasks);
       setSettings(result.settings);
-      setCollapsedParents(new Set());
 
       const s = result.settings;
       setProjectName(s.projectName || '');
+
+      const ratio = parseFloat(s.splitRatio);
+      if (Number.isFinite(ratio) && ratio > 0 && ratio < 1) {
+        setSplitRatio(ratio);
+      } else {
+        setSplitRatio(0.38);
+      }
+
+      const collapsedList = (s.collapsedParents || '')
+        .split(',')
+        .map((x) => x.trim())
+        .filter(Boolean);
+      setCollapsedParents(new Set(collapsedList));
+
+      let restoredColWidths = {};
+      try { restoredColWidths = JSON.parse(s.colWidths || '{}'); } catch { /* ignore */ }
+      setColWidths(restoredColWidths && typeof restoredColWidths === 'object' ? restoredColWidths : {});
+
+      setGanttScale(s.ganttScale === 'week' ? 'week' : 'day');
+      const zoom = parseInt(s.ganttZoom, 10);
+      setGanttZoom(Number.isFinite(zoom) && zoom >= 25 && zoom <= 200 ? zoom : 100);
       const colors = extractThemeColors(s);
       applyThemeToDOM(colors);
       setActiveTheme(s.themeName || 'Notion Light');
@@ -906,6 +950,7 @@ export default function App() {
   const handleMouseDown = useCallback((e) => {
     e.preventDefault();
     isDragging.current = true;
+    let moved = false;
 
     const onMouseMove = (e) => {
       if (!isDragging.current || !containerRef.current) return;
@@ -916,17 +961,19 @@ export default function App() {
       const minLeftRatio = MIN_LEFT_WIDTH / totalWidth;
       const maxLeftRatio = 1 - MIN_RIGHT_WIDTH / totalWidth;
       setSplitRatio(Math.min(maxLeftRatio, Math.max(minLeftRatio, ratio)));
+      moved = true;
     };
 
     const onMouseUp = () => {
       isDragging.current = false;
       document.removeEventListener('mousemove', onMouseMove);
       document.removeEventListener('mouseup', onMouseUp);
+      if (moved) markDirty();
     };
 
     document.addEventListener('mousemove', onMouseMove);
     document.addEventListener('mouseup', onMouseUp);
-  }, []);
+  }, [markDirty]);
 
   return (
     <div
@@ -1017,6 +1064,8 @@ export default function App() {
             onDatePickField={setDatePickField}
             onBeginDrag={handleBeginDrag}
             onEndDrag={handleEndDrag}
+            colWidths={colWidths}
+            onColWidthChange={handleColWidthChange}
           />
         </div>
 
@@ -1044,6 +1093,10 @@ export default function App() {
             onDatePickField={setDatePickField}
             onBeginDrag={handleBeginDrag}
             onEndDrag={handleEndDrag}
+            scale={ganttScale}
+            onScaleChange={handleGanttScaleChange}
+            zoomPct={ganttZoom}
+            onZoomChange={handleGanttZoomChange}
           />
         </div>
       </div>

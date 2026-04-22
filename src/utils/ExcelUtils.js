@@ -50,6 +50,11 @@ const SETTINGS_FIELDS = [
   { key: 'categoryColors', label: 'Category Colors', defaultValue: '{}' },
   { key: 'customColumns', label: 'Custom Columns', defaultValue: '[]' },
   { key: 'columnOrder', label: 'Column Order', defaultValue: '' },
+  { key: 'splitRatio', label: 'Split Ratio', defaultValue: '0.38' },
+  { key: 'collapsedParents', label: 'Collapsed Parents', defaultValue: '' },
+  { key: 'colWidths', label: 'Column Widths', defaultValue: '{}' },
+  { key: 'ganttScale', label: 'Gantt Scale', defaultValue: 'day' },
+  { key: 'ganttZoom', label: 'Gantt Zoom', defaultValue: '100' },
 ];
 
 export function downloadTemplate() {
