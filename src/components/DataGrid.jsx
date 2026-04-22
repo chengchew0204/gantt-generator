@@ -209,6 +209,13 @@ export default function DataGrid({ data, onChange }) {
     });
   }, [editingCell]);
 
+  // Focus the container on mount so keyboard shortcuts (arrows, printable keys
+  // -> start-editing) work immediately when a data-sheet tab is opened, without
+  // requiring the user to click a cell first.
+  useEffect(() => {
+    containerRef.current?.focus({ preventScroll: true });
+  }, []);
+
   const getColW = useCallback((colIdx) => {
     const key = colLabel(colIdx);
     return colWidths[key] ?? DEFAULT_COL_WIDTH;
@@ -317,6 +324,11 @@ export default function DataGrid({ data, onChange }) {
     }
 
     e.preventDefault();
+
+    // Move keyboard focus to the container so onKeyDown fires for direct typing.
+    // mousedown+preventDefault suppresses the default focus shift, leaving focus
+    // on whatever was focused before (e.g. the tab button in StatusBar).
+    containerRef.current?.focus({ preventScroll: true });
 
     if (editingCell) {
       commitEdit(editingCell.row, editingCell.col, editText);
