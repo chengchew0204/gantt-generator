@@ -849,7 +849,7 @@ export default function App() {
 
       setGanttScale(s.ganttScale === 'week' ? 'week' : 'day');
       const zoom = parseInt(s.ganttZoom, 10);
-      setGanttZoom(Number.isFinite(zoom) && zoom >= 25 && zoom <= 200 ? zoom : 100);
+      setGanttZoom(Number.isFinite(zoom) && zoom >= 5 && zoom <= 300 ? zoom : 100);
       const colors = extractThemeColors(s);
       applyThemeToDOM(colors);
       setActiveTheme(s.themeName || 'Notion Light');

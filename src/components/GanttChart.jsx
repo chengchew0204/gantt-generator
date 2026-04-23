@@ -9,8 +9,8 @@ const BAR_HEIGHT = 16;
 const BASELINE_HEIGHT = 4;
 const SUMMARY_HEIGHT = 10;
 
-const ZOOM_MIN = 25;
-const ZOOM_MAX = 200;
+const ZOOM_MIN = 5;
+const ZOOM_MAX = 300;
 const BASE_UNIT_AT_100 = 32;
 // Extra right-side pixels reserved so task name labels that appear after
 // the last bar are not clipped by the SVG boundary.
