@@ -1,5 +1,16 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Bold, Italic, Underline, Grid3x3 } from 'lucide-react';
+import {
+  Bold,
+  Italic,
+  Underline,
+  Grid3x3,
+  AlignLeft,
+  AlignCenter,
+  AlignRight,
+  AlignVerticalJustifyStart,
+  AlignVerticalJustifyCenter,
+  AlignVerticalJustifyEnd,
+} from 'lucide-react';
 
 export default function SpreadsheetToolbar({
   cellRef,
@@ -45,6 +56,48 @@ export default function SpreadsheetToolbar({
         <div className="w-px h-4 mx-0.5 flex-shrink-0" style={{ backgroundColor: 'var(--color-border)' }} />
 
         <BorderPicker onApply={onApplyBorderPreset} />
+
+        <div className="w-px h-4 mx-0.5 flex-shrink-0" style={{ backgroundColor: 'var(--color-border)' }} />
+
+        <FormatButton
+          icon={AlignLeft}
+          active={style.hAlign === 'left'}
+          onClick={() => onApplyStyle({ hAlign: style.hAlign === 'left' ? undefined : 'left' })}
+          title="Align left"
+        />
+        <FormatButton
+          icon={AlignCenter}
+          active={style.hAlign === 'center'}
+          onClick={() => onApplyStyle({ hAlign: style.hAlign === 'center' ? undefined : 'center' })}
+          title="Align center"
+        />
+        <FormatButton
+          icon={AlignRight}
+          active={style.hAlign === 'right'}
+          onClick={() => onApplyStyle({ hAlign: style.hAlign === 'right' ? undefined : 'right' })}
+          title="Align right"
+        />
+
+        <div className="w-px h-4 mx-0.5 flex-shrink-0" style={{ backgroundColor: 'var(--color-border)' }} />
+
+        <FormatButton
+          icon={AlignVerticalJustifyStart}
+          active={style.vAlign === 'top'}
+          onClick={() => onApplyStyle({ vAlign: style.vAlign === 'top' ? undefined : 'top' })}
+          title="Align top"
+        />
+        <FormatButton
+          icon={AlignVerticalJustifyCenter}
+          active={style.vAlign === 'middle'}
+          onClick={() => onApplyStyle({ vAlign: style.vAlign === 'middle' ? undefined : 'middle' })}
+          title="Align middle"
+        />
+        <FormatButton
+          icon={AlignVerticalJustifyEnd}
+          active={style.vAlign === 'bottom'}
+          onClick={() => onApplyStyle({ vAlign: style.vAlign === 'bottom' ? undefined : 'bottom' })}
+          title="Align bottom"
+        />
 
         <div className="w-px h-4 mx-0.5 flex-shrink-0" style={{ backgroundColor: 'var(--color-border)' }} />
 
