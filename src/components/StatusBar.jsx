@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
 import { Plus, Calendar, CalendarDays, ZoomIn, ZoomOut } from 'lucide-react';
 
-const ZOOM_MIN = 25;
-const ZOOM_MAX = 200;
+const ZOOM_MIN = 5;
+const ZOOM_MAX = 300;
 const ZOOM_STEP = 10;
 
 export default function StatusBar({
