@@ -468,6 +468,19 @@ export default function DataGrid({ data, onChange }) {
     }
   }, [editingCell, editText, commitEdit, cancelEditing, rows, cols, isFormulaEditing]);
 
+  const applyStyleToSelected = useCallback((partialStyle) => {
+    if (!selRect || !onChange) return;
+    const updated = { ...cells };
+    for (let r = selRect.r1; r <= selRect.r2; r++) {
+      for (let c = selRect.c1; c <= selRect.c2; c++) {
+        const key = cellKey(r, c);
+        const existing = updated[key] || {};
+        updated[key] = { ...existing, s: { ...(existing.s || {}), ...partialStyle } };
+      }
+    }
+    onChange({ ...data, cells: updated });
+  }, [selRect, cells, onChange, data]);
+
   const handleGridKeyDown = useCallback((e) => {
     if (!selectedCell) return;
     const { row, col } = selectedCell;
@@ -534,7 +547,18 @@ export default function DataGrid({ data, onChange }) {
       setSelectionEnd(null);
       startEditing(row, col, e.key, 'cell');
     }
-  }, [selectedCell, editingCell, rows, cols, commitEdit, cells, startEditing]);
+  }, [
+    selectedCell,
+    editingCell,
+    rows,
+    cols,
+    cells,
+    startEditing,
+    applyStyleToSelected,
+    selRect,
+    onChange,
+    data,
+  ]);
 
   const handleStartBarEdit = useCallback(() => {
     if (editingCell) {
@@ -624,19 +648,6 @@ export default function DataGrid({ data, onChange }) {
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
   }, [onChange, data]);
-
-  const applyStyleToSelected = useCallback((partialStyle) => {
-    if (!selRect || !onChange) return;
-    const updated = { ...cells };
-    for (let r = selRect.r1; r <= selRect.r2; r++) {
-      for (let c = selRect.c1; c <= selRect.c2; c++) {
-        const key = cellKey(r, c);
-        const existing = updated[key] || {};
-        updated[key] = { ...existing, s: { ...(existing.s || {}), ...partialStyle } };
-      }
-    }
-    onChange({ ...data, cells: updated });
-  }, [selRect, cells, onChange, data]);
 
   const handleApplyBorderPreset = useCallback((presetId) => {
     if (!selRect || !onChange) return;
