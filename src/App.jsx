@@ -638,7 +638,7 @@ export default function App() {
     setTabs((prev) => [...prev, { id, name }]);
     setGridData((prev) => ({
       ...prev,
-      [id]: { rows: 50, cols: 26, cells: {}, colWidths: {} },
+      [id]: { rows: 50, cols: 26, cells: {}, colWidths: {}, merges: [] },
     }));
     setActiveTab(id);
     markDirty();

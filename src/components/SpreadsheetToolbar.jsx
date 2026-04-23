@@ -10,6 +10,7 @@ import {
   AlignVerticalJustifyStart,
   AlignVerticalJustifyCenter,
   AlignVerticalJustifyEnd,
+  ChevronDown,
 } from 'lucide-react';
 
 export default function SpreadsheetToolbar({
@@ -26,6 +27,9 @@ export default function SpreadsheetToolbar({
   onApplyBorderPreset,
   onToggleGridLines,
   showGridLines,
+  onMerge,
+  onUnmerge,
+  isMergedSelection,
 }) {
   const style = cellStyle || {};
 
@@ -97,6 +101,14 @@ export default function SpreadsheetToolbar({
           active={style.vAlign === 'bottom'}
           onClick={() => onApplyStyle({ vAlign: style.vAlign === 'bottom' ? undefined : 'bottom' })}
           title="Align bottom"
+        />
+
+        <div className="w-px h-4 mx-0.5 flex-shrink-0" style={{ backgroundColor: 'var(--color-border)' }} />
+
+        <MergeMenu
+          onMerge={onMerge}
+          onUnmerge={onUnmerge}
+          isMergedSelection={!!isMergedSelection}
         />
 
         <div className="w-px h-4 mx-0.5 flex-shrink-0" style={{ backgroundColor: 'var(--color-border)' }} />
@@ -489,6 +501,147 @@ function BorderPicker({ onApply }) {
                 </button>
               ))}
             </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Excel-style merge icons. Each draws a 2x2 (or related) cell grid outline
+// to communicate the action visually, rather than Lucide's generic graph
+// glyphs. Sized at 13px to match the surrounding FormatButton icons.
+function MergeCenterIcon({ size = 13 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="1.5" y="3.5" width="13" height="9" />
+      <path d="M3 8 L6.5 8" />
+      <path d="M13 8 L9.5 8" />
+      <path d="M5 6.5 L3 8 L5 9.5" />
+      <path d="M11 6.5 L13 8 L11 9.5" />
+    </svg>
+  );
+}
+
+function MergeAcrossIcon({ size = 13 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="1.5" y="2" width="13" height="5" />
+      <rect x="1.5" y="9" width="13" height="5" />
+      <path d="M3 4.5 L6.5 4.5 M13 4.5 L9.5 4.5" />
+      <path d="M4.5 3.5 L3 4.5 L4.5 5.5 M11.5 3.5 L13 4.5 L11.5 5.5" />
+      <path d="M3 11.5 L6.5 11.5 M13 11.5 L9.5 11.5" />
+      <path d="M4.5 10.5 L3 11.5 L4.5 12.5 M11.5 10.5 L13 11.5 L11.5 12.5" />
+    </svg>
+  );
+}
+
+function MergeCellsIcon({ size = 13 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="1.5" y="2.5" width="13" height="11" />
+      <path d="M1.5 8 L14.5 8" strokeDasharray="1.2 1.2" />
+      <path d="M8 2.5 L8 13.5" strokeDasharray="1.2 1.2" />
+    </svg>
+  );
+}
+
+function UnmergeIcon({ size = 13 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="1.5" y="2.5" width="13" height="11" />
+      <path d="M8 2.5 L8 13.5" />
+      <path d="M5 6 L8 8 L11 6" />
+      <path d="M5 10 L8 8 L11 10" />
+    </svg>
+  );
+}
+
+const MERGE_OPTIONS = [
+  { id: 'center',  label: 'Merge & Center', Icon: MergeCenterIcon },
+  { id: 'across',  label: 'Merge Across',   Icon: MergeAcrossIcon },
+  { id: 'cells',   label: 'Merge Cells',    Icon: MergeCellsIcon },
+  { id: 'unmerge', label: 'Unmerge Cells',  Icon: UnmergeIcon },
+];
+
+function MergeMenu({ onMerge, onUnmerge, isMergedSelection }) {
+  const [open, setOpen] = useState(false);
+  const panelRef = useRef(null);
+  const close = useCallback(() => setOpen(false), []);
+
+  useEffect(() => {
+    if (!open) return;
+    const handleClickOutside = (e) => {
+      if (panelRef.current && !panelRef.current.contains(e.target)) close();
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [open, close]);
+
+  const handleDefaultClick = () => {
+    if (isMergedSelection) {
+      onUnmerge?.();
+    } else {
+      onMerge?.('center');
+    }
+  };
+
+  const handleSelect = (id) => {
+    close();
+    if (id === 'unmerge') onUnmerge?.();
+    else onMerge?.(id);
+  };
+
+  const MainIcon = isMergedSelection ? UnmergeIcon : MergeCenterIcon;
+  const mainTitle = isMergedSelection ? 'Unmerge cells' : 'Merge & Center';
+
+  return (
+    <div ref={panelRef} className="relative flex items-center flex-shrink-0">
+      <button
+        onClick={handleDefaultClick}
+        onMouseDown={(e) => e.preventDefault()}
+        title={mainTitle}
+        className="flex items-center justify-center w-6 h-6 rounded-l cursor-pointer transition-colors"
+        style={{ color: 'var(--color-text-muted)', backgroundColor: 'transparent' }}
+        onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)'; e.currentTarget.style.color = 'var(--color-text-secondary)'; }}
+        onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = 'var(--color-text-muted)'; }}
+      >
+        <MainIcon size={13} />
+      </button>
+      <button
+        onClick={() => setOpen((v) => !v)}
+        onMouseDown={(e) => e.preventDefault()}
+        title="Merge options"
+        className="flex items-center justify-center h-6 rounded-r cursor-pointer transition-colors"
+        style={{ width: 12, color: 'var(--color-text-muted)', backgroundColor: 'transparent' }}
+        onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)'; e.currentTarget.style.color = 'var(--color-text-secondary)'; }}
+        onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = 'var(--color-text-muted)'; }}
+      >
+        <ChevronDown size={10} />
+      </button>
+
+      {open && (
+        <div
+          className="absolute top-full left-0 mt-1 py-1 rounded-md shadow-lg z-50"
+          style={{
+            backgroundColor: 'var(--color-bg-secondary)',
+            border: '1px solid var(--color-border)',
+            width: 180,
+          }}
+        >
+          {MERGE_OPTIONS.map((opt) => (
+            <button
+              key={opt.id}
+              onClick={() => handleSelect(opt.id)}
+              onMouseDown={(e) => e.preventDefault()}
+              className="flex items-center gap-2 w-full px-3 py-1 text-left text-[11px] cursor-pointer transition-colors"
+              style={{ color: 'var(--color-text-secondary)' }}
+              onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)'; e.currentTarget.style.color = 'var(--color-text-primary)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = 'var(--color-text-secondary)'; }}
+            >
+              <opt.Icon size={13} />
+              <span>{opt.label}</span>
+            </button>
           ))}
         </div>
       )}
