@@ -11,7 +11,15 @@ import {
   AlignVerticalJustifyCenter,
   AlignVerticalJustifyEnd,
   ChevronDown,
+  Shapes,
+  Sparkles,
+  BringToFront,
+  SendToBack,
+  MoveUp,
+  MoveDown,
+  Trash2,
 } from 'lucide-react';
+import { groupShapePresets, renderShapePath, isLineShape, getShapePreset } from '../utils/ShapePresets';
 
 export default function SpreadsheetToolbar({
   cellRef,
@@ -30,8 +38,16 @@ export default function SpreadsheetToolbar({
   onMerge,
   onUnmerge,
   isMergedSelection,
+  shapeMode,
+  onSetShapeMode,
+  selectedShape,
+  onApplyShapeStyle,
+  onApplyTextStyle,
+  onArrange,
+  onDeleteShape,
 }) {
   const style = cellStyle || {};
+  const showShapeRow = !!selectedShape || !!shapeMode;
 
   return (
     <div className="flex flex-col flex-shrink-0" style={{ borderBottom: '1px solid var(--color-border)' }}>
@@ -114,7 +130,21 @@ export default function SpreadsheetToolbar({
         <div className="w-px h-4 mx-0.5 flex-shrink-0" style={{ backgroundColor: 'var(--color-border)' }} />
 
         <FormatButton icon={Grid3x3} active={showGridLines !== false} onClick={onToggleGridLines} title="Toggle grid lines" />
+
+        <div className="w-px h-4 mx-0.5 flex-shrink-0" style={{ backgroundColor: 'var(--color-border)' }} />
+
+        <InsertShapesMenu shapeMode={shapeMode} onSetShapeMode={onSetShapeMode} />
       </div>
+
+      {showShapeRow && (
+        <ShapeToolbarRow
+          shape={selectedShape}
+          onApplyShapeStyle={onApplyShapeStyle}
+          onApplyTextStyle={onApplyTextStyle}
+          onArrange={onArrange}
+          onDeleteShape={onDeleteShape}
+        />
+      )}
 
       {/* Row 2: Formula bar */}
       <div
@@ -206,11 +236,22 @@ function FontSizeInput({ value, onChange }) {
   const [draft, setDraft] = useState(String(value));
   useEffect(() => { setDraft(String(value)); }, [value]);
 
-  const commit = () => {
-    const n = parseInt(draft, 10);
+  // Commit on every change when the draft is a valid in-range number so
+  // that font size updates apply in real time (important feedback when
+  // editing shape text). On blur, snap back to the prop value if the
+  // draft is still invalid or out of range.
+  const handleChange = (e) => {
+    const next = e.target.value;
+    setDraft(next);
+    const n = parseInt(next, 10);
     if (Number.isFinite(n) && n >= 6 && n <= 72) {
       onChange(n);
-    } else {
+    }
+  };
+
+  const handleBlur = () => {
+    const n = parseInt(draft, 10);
+    if (!Number.isFinite(n) || n < 6 || n > 72) {
       setDraft(String(value));
     }
   };
@@ -221,8 +262,8 @@ function FontSizeInput({ value, onChange }) {
       value={draft}
       min={6}
       max={72}
-      onChange={(e) => setDraft(e.target.value)}
-      onBlur={commit}
+      onChange={handleChange}
+      onBlur={handleBlur}
       onMouseDown={(e) => e.stopPropagation()}
       onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
       className="tabular-nums text-center font-medium bg-transparent outline-none border-b flex-shrink-0"
@@ -382,10 +423,15 @@ const BORDER_SECTIONS = [
   ],
 ];
 
-function BorderOptionIcon({ borders, showInner, size = 16 }) {
+function BorderOptionIcon({ borders, showInner, showInnerDashed, size = 16 }) {
   const p = 2;
   const s = size - p * 2;
   const faint = 'var(--color-border-subtle)';
+  // Darker dashed lines used by the toolbar button (showInnerDashed=true)
+  // so the 2x2 cell-grid reads clearly next to the solid bottom border.
+  // Menu items keep using the very faint outer rect so their border
+  // previews remain the visual focus.
+  const gridColor = 'var(--color-text-muted)';
   const mx = p + s / 2;
   const my = p + s / 2;
 
@@ -405,10 +451,16 @@ function BorderOptionIcon({ borders, showInner, size = 16 }) {
   }
 
   const isNone = !borders && !showInner;
+  const outerColor = showInnerDashed ? gridColor : faint;
+  const outerStrokeWidth = showInnerDashed ? 0.8 : 0.5;
 
   return (
     <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{ flexShrink: 0 }}>
-      <rect x={p} y={p} width={s} height={s} fill="none" stroke={faint} strokeWidth={0.5} strokeDasharray="2 1" />
+      <rect x={p} y={p} width={s} height={s} fill="none" stroke={outerColor} strokeWidth={outerStrokeWidth} strokeDasharray="2 1" />
+      {showInnerDashed && (<>
+        <line x1={p} y1={my} x2={p + s} y2={my} stroke={gridColor} strokeWidth={0.8} strokeDasharray="2 1" />
+        <line x1={mx} y1={p} x2={mx} y2={p + s} stroke={gridColor} strokeWidth={0.8} strokeDasharray="2 1" />
+      </>)}
       {isNone && (
         <line x1={p} y1={p + s} x2={p + s} y2={p} stroke="var(--color-danger)" strokeWidth={1} opacity={0.5} />
       )}
@@ -466,7 +518,7 @@ function BorderPicker({ onApply }) {
         onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; }}
         title="Borders"
       >
-        <BorderOptionIcon borders={{ bottom: THIN }} size={16} />
+        <BorderOptionIcon borders={{ bottom: THIN }} showInnerDashed size={16} />
         <svg width={8} height={8} viewBox="0 0 8 8" style={{ opacity: 0.5 }}>
           <path d="M1 3 L4 6 L7 3" fill="none" stroke="currentColor" strokeWidth={1.2} />
         </svg>
@@ -645,6 +697,746 @@ function MergeMenu({ onMerge, onUnmerge, isMergedSelection }) {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function InsertShapesMenu({ shapeMode, onSetShapeMode }) {
+  const [open, setOpen] = useState(false);
+  const panelRef = useRef(null);
+  const close = useCallback(() => setOpen(false), []);
+
+  useEffect(() => {
+    if (!open) return;
+    const handleClickOutside = (e) => {
+      if (panelRef.current && !panelRef.current.contains(e.target)) close();
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [open, close]);
+
+  const groups = groupShapePresets();
+  const active = !!shapeMode;
+
+  const handleSelect = (presetId) => {
+    onSetShapeMode?.(presetId);
+    close();
+  };
+
+  return (
+    <div ref={panelRef} className="relative flex items-center flex-shrink-0">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        onMouseDown={(e) => e.preventDefault()}
+        title="Insert shapes"
+        className="flex items-center justify-center gap-0.5 h-6 px-1 rounded cursor-pointer transition-colors"
+        style={{
+          color: active ? 'var(--color-accent)' : 'var(--color-text-muted)',
+          backgroundColor: active ? 'var(--color-accent-muted)' : 'transparent',
+        }}
+        onMouseEnter={(e) => { if (!active) e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)'; }}
+        onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = active ? 'var(--color-accent-muted)' : 'transparent'; }}
+      >
+        <Shapes size={13} />
+        <ChevronDown size={9} style={{ opacity: 0.6 }} />
+      </button>
+      {open && (
+        <div
+          className="absolute top-full left-0 mt-1 rounded-md shadow-lg z-50"
+          style={{
+            backgroundColor: 'var(--color-bg-secondary)',
+            border: '1px solid var(--color-border)',
+            width: 248,
+            maxHeight: 420,
+            overflowY: 'auto',
+          }}
+        >
+          {Object.entries(groups).map(([groupName, presets]) => (
+            <div key={groupName}>
+              <div
+                className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wide select-none"
+                style={{
+                  color: 'var(--color-text-muted)',
+                  backgroundColor: 'var(--color-bg-tertiary)',
+                  borderBottom: '1px solid var(--color-border-subtle)',
+                }}
+              >
+                {groupName}
+              </div>
+              <div className="grid gap-1 p-2" style={{ gridTemplateColumns: 'repeat(8, 1fr)' }}>
+                {presets.map((p) => (
+                  <button
+                    key={p.id}
+                    onClick={() => handleSelect(p.id)}
+                    onMouseDown={(e) => e.preventDefault()}
+                    title={p.label}
+                    className="flex items-center justify-center rounded cursor-pointer transition-colors"
+                    style={{
+                      width: 24,
+                      height: 24,
+                      color: 'var(--color-text-secondary)',
+                      backgroundColor: shapeMode === p.id ? 'var(--color-accent-muted)' : 'transparent',
+                      border: '1px solid var(--color-border-subtle)',
+                    }}
+                    onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)'; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = shapeMode === p.id ? 'var(--color-accent-muted)' : 'transparent'; }}
+                  >
+                    <ShapeGlyph presetId={p.id} size={16} />
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ShapeGlyph({ presetId, size = 16 }) {
+  const preset = getShapePreset(presetId);
+  const padding = 2;
+  const inner = size - padding * 2;
+  const d = renderShapePath(presetId, inner, inner);
+  const isLine = isLineShape(presetId);
+  const arrowEnd = preset?.arrowEnd;
+  const arrowStart = preset?.arrowStart;
+  const uid = `shape-glyph-${presetId}`;
+
+  // Text-box variants render as just a "T" / "T|" glyph since the shape
+  // itself has no fill and no outline and would be invisible otherwise.
+  if (preset?.isTextBox) {
+    return (
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{ flexShrink: 0 }}>
+        <rect x={1.5} y={1.5} width={size - 3} height={size - 3} fill="none" stroke="currentColor" strokeWidth={0.6} strokeDasharray="1.5 1" />
+        <text
+          x={size / 2}
+          y={size / 2}
+          fontSize={size * 0.65}
+          fontWeight={700}
+          textAnchor="middle"
+          dominantBaseline="central"
+          fill="currentColor"
+          transform={preset.vertical ? `rotate(90 ${size / 2} ${size / 2})` : undefined}
+        >T</text>
+      </svg>
+    );
+  }
+
+  return (
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{ flexShrink: 0 }}>
+      {(arrowEnd || arrowStart) && (
+        <defs>
+          {arrowEnd && (
+            <marker id={`${uid}-end`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="4" markerHeight="4" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 Z" fill="currentColor" />
+            </marker>
+          )}
+          {arrowStart && (
+            <marker id={`${uid}-start`} viewBox="0 0 10 10" refX="1" refY="5" markerWidth="4" markerHeight="4" orient="auto">
+              <path d="M10,0 L0,5 L10,10 Z" fill="currentColor" />
+            </marker>
+          )}
+        </defs>
+      )}
+      <g transform={`translate(${padding} ${padding})`}>
+        <path
+          d={d}
+          fill={isLine ? 'none' : 'currentColor'}
+          stroke="currentColor"
+          strokeWidth={isLine ? 1.2 : 0.7}
+          strokeLinejoin="round"
+          strokeLinecap="round"
+          markerEnd={arrowEnd ? `url(#${uid}-end)` : undefined}
+          markerStart={arrowStart ? `url(#${uid}-start)` : undefined}
+        />
+      </g>
+    </svg>
+  );
+}
+
+const SHAPE_DASH_OPTIONS = [
+  { id: 'solid', label: 'Solid' },
+  { id: 'dash', label: 'Dash' },
+  { id: 'dot', label: 'Dot' },
+  { id: 'dashDot', label: 'Dash-Dot' },
+  { id: 'longDash', label: 'Long Dash' },
+];
+
+const SHAPE_WIDTH_OPTIONS = [0.5, 1, 1.5, 2, 3, 4, 6];
+
+function ShapeToolbarRow({ shape, onApplyShapeStyle, onApplyTextStyle, onArrange, onDeleteShape }) {
+  const style = shape?.style || {};
+  const textStyle = shape?.textStyle || {};
+  const fill = style.fill || {};
+  const outline = style.outline || {};
+  const effects = style.effects || {};
+  const tFill = textStyle.fill || {};
+
+  const disabled = !shape;
+
+  return (
+    <div
+      className="flex items-center gap-1 px-2"
+      style={{
+        height: 28,
+        borderBottom: '1px solid var(--color-border-subtle)',
+        backgroundColor: 'var(--color-bg-tertiary)',
+      }}
+    >
+      <span
+        className="text-[10px] font-semibold uppercase tracking-wide select-none pr-1"
+        style={{ color: 'var(--color-text-muted)' }}
+      >
+        Shape
+      </span>
+      <ShapeColorPicker
+        value={fill.color || ''}
+        alpha={fill.alpha != null ? fill.alpha : 1}
+        disabled={disabled}
+        showAlpha
+        onChange={(color, alpha) => onApplyShapeStyle?.({ fill: { type: color ? 'solid' : 'none', color, alpha } })}
+        title="Shape Fill"
+        label="Fill"
+      />
+      <ShapeColorPicker
+        value={outline.color || ''}
+        alpha={outline.alpha != null ? outline.alpha : 1}
+        disabled={disabled}
+        onChange={(color, alpha) => onApplyShapeStyle?.({ outline: { ...outline, color, alpha } })}
+        title="Shape Outline"
+        label="Outline"
+      />
+      <ShapeOutlineMenu
+        outline={outline}
+        disabled={disabled}
+        onChange={(next) => onApplyShapeStyle?.({ outline: { ...outline, ...next } })}
+      />
+      <ShapeEffectsMenu
+        effects={effects}
+        disabled={disabled}
+        onChange={(next) => onApplyShapeStyle?.({ effects: next })}
+      />
+
+      <div className="w-px h-4 mx-0.5 flex-shrink-0" style={{ backgroundColor: 'var(--color-border)' }} />
+
+      <span
+        className="text-[10px] font-semibold uppercase tracking-wide select-none pr-1"
+        style={{ color: 'var(--color-text-muted)' }}
+      >
+        Text
+      </span>
+      <ShapeColorPicker
+        value={tFill.color || ''}
+        alpha={tFill.alpha != null ? tFill.alpha : 1}
+        disabled={disabled}
+        onChange={(color, alpha) => onApplyTextStyle?.({ fill: { color, alpha } })}
+        title="Text Fill"
+        label="A"
+      />
+      <ShapeColorPicker
+        value={textStyle.outline?.color || ''}
+        alpha={textStyle.outline?.alpha != null ? textStyle.outline.alpha : 1}
+        disabled={disabled}
+        onChange={(color, alpha) => onApplyTextStyle?.({ outline: { ...(textStyle.outline || {}), color, alpha, width: textStyle.outline?.width || 1 } })}
+        title="Text Outline"
+        label="Ao"
+      />
+      <TextEffectsMenu
+        effects={textStyle.effects || {}}
+        disabled={disabled}
+        onChange={(next) => onApplyTextStyle?.({ effects: next })}
+      />
+
+      <div className="w-px h-4 mx-0.5 flex-shrink-0" style={{ backgroundColor: 'var(--color-border)' }} />
+
+      <FormatButton
+        icon={BringToFront}
+        active={false}
+        onClick={() => onArrange?.('front')}
+        title="Bring to front"
+      />
+      <FormatButton
+        icon={SendToBack}
+        active={false}
+        onClick={() => onArrange?.('back')}
+        title="Send to back"
+      />
+      <FormatButton
+        icon={MoveUp}
+        active={false}
+        onClick={() => onArrange?.('forward')}
+        title="Bring forward"
+      />
+      <FormatButton
+        icon={MoveDown}
+        active={false}
+        onClick={() => onArrange?.('backward')}
+        title="Send backward"
+      />
+
+      <div className="w-px h-4 mx-0.5 flex-shrink-0" style={{ backgroundColor: 'var(--color-border)' }} />
+
+      <FormatButton
+        icon={Trash2}
+        active={false}
+        onClick={onDeleteShape}
+        title="Delete shape"
+      />
+    </div>
+  );
+}
+
+function ShapeColorPicker({ value, alpha, onChange, title, label, showAlpha, disabled }) {
+  const [open, setOpen] = useState(false);
+  const panelRef = useRef(null);
+  const customInputRef = useRef(null);
+
+  const close = useCallback(() => setOpen(false), []);
+
+  useEffect(() => {
+    if (!open) return;
+    const handleClickOutside = (e) => {
+      if (panelRef.current && !panelRef.current.contains(e.target)) close();
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [open, close]);
+
+  const handleSelect = (hex) => {
+    onChange?.(hex, alpha);
+    close();
+  };
+
+  const underlineColor = value || 'var(--color-text-muted)';
+
+  return (
+    <div ref={panelRef} className="relative flex items-center flex-shrink-0">
+      <button
+        disabled={disabled}
+        onClick={() => !disabled && setOpen((v) => !v)}
+        onMouseDown={(e) => e.preventDefault()}
+        className="flex flex-col items-center justify-center h-6 rounded cursor-pointer transition-colors"
+        style={{
+          width: label && label.length > 2 ? 38 : 28,
+          color: value || 'var(--color-text-primary)',
+          backgroundColor: 'transparent',
+          opacity: disabled ? 0.4 : 1,
+          cursor: disabled ? 'not-allowed' : 'pointer',
+        }}
+        onMouseEnter={(e) => { if (!disabled) e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)'; }}
+        onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; }}
+        title={title}
+      >
+        <span className="text-[10px] font-semibold leading-none" style={{ marginBottom: 1 }}>{label}</span>
+        <div style={{ width: 18, height: 3, backgroundColor: underlineColor, borderRadius: 1 }} />
+      </button>
+
+      {open && (
+        <div
+          className="absolute top-full left-0 mt-1 p-2 rounded-md shadow-lg z-50"
+          style={{
+            backgroundColor: 'var(--color-bg-secondary)',
+            border: '1px solid var(--color-border)',
+            width: 208,
+          }}
+        >
+          <div className="grid gap-[3px]" style={{ gridTemplateColumns: 'repeat(10, 1fr)' }}>
+            {PRESET_COLORS.map((hex) => (
+              <button
+                key={hex}
+                onClick={() => handleSelect(hex)}
+                onMouseDown={(e) => e.preventDefault()}
+                className="rounded-sm cursor-pointer transition-transform hover:scale-125"
+                style={{
+                  width: 17,
+                  height: 17,
+                  backgroundColor: hex,
+                  border: hex === '#ffffff' ? '1px solid var(--color-border)' : (value === hex ? '2px solid var(--color-accent)' : '1px solid transparent'),
+                }}
+                title={hex}
+              />
+            ))}
+          </div>
+          {showAlpha && (
+            <div className="flex items-center gap-2 mt-2 pt-2" style={{ borderTop: '1px solid var(--color-border-subtle)' }}>
+              <span className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>Opacity</span>
+              <input
+                type="range"
+                min={0}
+                max={100}
+                value={Math.round((alpha == null ? 1 : alpha) * 100)}
+                onChange={(e) => onChange?.(value, parseInt(e.target.value, 10) / 100)}
+                className="flex-1"
+              />
+              <span className="text-[10px] tabular-nums" style={{ color: 'var(--color-text-muted)', width: 24, textAlign: 'right' }}>
+                {Math.round((alpha == null ? 1 : alpha) * 100)}%
+              </span>
+            </div>
+          )}
+          <div className="flex items-center justify-between mt-2 pt-2" style={{ borderTop: '1px solid var(--color-border-subtle)' }}>
+            <button
+              onClick={() => handleSelect('')}
+              onMouseDown={(e) => e.preventDefault()}
+              className="text-[10px] px-2 py-0.5 rounded cursor-pointer"
+              style={{ color: 'var(--color-text-muted)' }}
+              onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; }}
+            >
+              No color
+            </button>
+            <button
+              onClick={() => customInputRef.current?.click()}
+              onMouseDown={(e) => e.preventDefault()}
+              className="text-[10px] px-2 py-0.5 rounded cursor-pointer"
+              style={{ color: 'var(--color-accent)' }}
+              onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; }}
+            >
+              Custom...
+            </button>
+            <input
+              ref={customInputRef}
+              type="color"
+              value={value || '#000000'}
+              onChange={(e) => handleSelect(e.target.value)}
+              className="absolute opacity-0 w-0 h-0"
+              tabIndex={-1}
+            />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ShapeOutlineMenu({ outline, disabled, onChange }) {
+  const [open, setOpen] = useState(false);
+  const panelRef = useRef(null);
+  const close = useCallback(() => setOpen(false), []);
+
+  useEffect(() => {
+    if (!open) return;
+    const handleClickOutside = (e) => {
+      if (panelRef.current && !panelRef.current.contains(e.target)) close();
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [open, close]);
+
+  const currentWidth = outline?.width != null ? outline.width : 1;
+  const currentDash = outline?.dash || 'solid';
+
+  return (
+    <div ref={panelRef} className="relative flex items-center flex-shrink-0">
+      <button
+        disabled={disabled}
+        onClick={() => !disabled && setOpen((v) => !v)}
+        onMouseDown={(e) => e.preventDefault()}
+        className="flex items-center justify-center h-6 px-1 rounded cursor-pointer transition-colors gap-0.5"
+        style={{ color: 'var(--color-text-muted)', opacity: disabled ? 0.4 : 1 }}
+        onMouseEnter={(e) => { if (!disabled) e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)'; }}
+        onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; }}
+        title="Outline weight & style"
+      >
+        <svg width={16} height={12} viewBox="0 0 16 12">
+          <line x1={1} y1={6} x2={15} y2={6} stroke="currentColor" strokeWidth={currentWidth} strokeDasharray={currentDash === 'solid' ? undefined : '3 2'} />
+        </svg>
+        <ChevronDown size={9} style={{ opacity: 0.6 }} />
+      </button>
+      {open && (
+        <div
+          className="absolute top-full left-0 mt-1 py-1 rounded-md shadow-lg z-50"
+          style={{
+            backgroundColor: 'var(--color-bg-secondary)',
+            border: '1px solid var(--color-border)',
+            width: 180,
+          }}
+        >
+          <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wide" style={{ color: 'var(--color-text-muted)' }}>
+            Weight
+          </div>
+          {SHAPE_WIDTH_OPTIONS.map((w) => (
+            <button
+              key={w}
+              onClick={() => { onChange?.({ width: w }); close(); }}
+              onMouseDown={(e) => e.preventDefault()}
+              className="flex items-center gap-3 w-full px-3 py-1 text-left text-[11px] cursor-pointer transition-colors"
+              style={{
+                color: 'var(--color-text-secondary)',
+                backgroundColor: currentWidth === w ? 'var(--color-accent-muted)' : 'transparent',
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = currentWidth === w ? 'var(--color-accent-muted)' : 'transparent'; }}
+            >
+              <svg width={36} height={8} viewBox="0 0 36 8">
+                <line x1={0} y1={4} x2={36} y2={4} stroke="currentColor" strokeWidth={w} />
+              </svg>
+              <span className="tabular-nums">{w} pt</span>
+            </button>
+          ))}
+          <div className="my-1 mx-2" style={{ height: 1, backgroundColor: 'var(--color-border-subtle)' }} />
+          <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wide" style={{ color: 'var(--color-text-muted)' }}>
+            Dash
+          </div>
+          {SHAPE_DASH_OPTIONS.map((opt) => (
+            <button
+              key={opt.id}
+              onClick={() => { onChange?.({ dash: opt.id }); close(); }}
+              onMouseDown={(e) => e.preventDefault()}
+              className="flex items-center gap-3 w-full px-3 py-1 text-left text-[11px] cursor-pointer transition-colors"
+              style={{
+                color: 'var(--color-text-secondary)',
+                backgroundColor: currentDash === opt.id ? 'var(--color-accent-muted)' : 'transparent',
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = currentDash === opt.id ? 'var(--color-accent-muted)' : 'transparent'; }}
+            >
+              <svg width={36} height={8} viewBox="0 0 36 8">
+                <line x1={0} y1={4} x2={36} y2={4} stroke="currentColor" strokeWidth={1.5} strokeDasharray={dashPreview(opt.id)} />
+              </svg>
+              <span>{opt.label}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function dashPreview(id) {
+  switch (id) {
+    case 'dash': return '6 3';
+    case 'dot': return '2 2';
+    case 'dashDot': return '6 2 2 2';
+    case 'longDash': return '10 3';
+    default: return undefined;
+  }
+}
+
+function ShapeEffectsMenu({ effects, disabled, onChange }) {
+  const [open, setOpen] = useState(false);
+  const panelRef = useRef(null);
+  const close = useCallback(() => setOpen(false), []);
+
+  useEffect(() => {
+    if (!open) return;
+    const handleClickOutside = (e) => {
+      if (panelRef.current && !panelRef.current.contains(e.target)) close();
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [open, close]);
+
+  const hasShadow = !!effects?.shadow;
+  const hasGlow = !!effects?.glow;
+  const hasSoft = !!effects?.softEdge;
+  const any = hasShadow || hasGlow || hasSoft;
+
+  const toggle = (key, defaultVal) => {
+    const next = { ...(effects || {}) };
+    if (next[key]) delete next[key];
+    else next[key] = defaultVal;
+    onChange?.(next);
+  };
+
+  return (
+    <div ref={panelRef} className="relative flex items-center flex-shrink-0">
+      <button
+        disabled={disabled}
+        onClick={() => !disabled && setOpen((v) => !v)}
+        onMouseDown={(e) => e.preventDefault()}
+        className="flex items-center justify-center h-6 px-1 rounded cursor-pointer transition-colors gap-0.5"
+        style={{
+          color: any ? 'var(--color-accent)' : 'var(--color-text-muted)',
+          backgroundColor: any ? 'var(--color-accent-muted)' : 'transparent',
+          opacity: disabled ? 0.4 : 1,
+        }}
+        onMouseEnter={(e) => { if (!disabled) e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)'; }}
+        onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = any ? 'var(--color-accent-muted)' : 'transparent'; }}
+        title="Shape effects"
+      >
+        <Sparkles size={13} />
+        <ChevronDown size={9} style={{ opacity: 0.6 }} />
+      </button>
+      {open && (
+        <div
+          className="absolute top-full left-0 mt-1 py-2 rounded-md shadow-lg z-50"
+          style={{
+            backgroundColor: 'var(--color-bg-secondary)',
+            border: '1px solid var(--color-border)',
+            width: 240,
+          }}
+        >
+          <EffectSection
+            label="Shadow"
+            enabled={hasShadow}
+            onToggle={() => toggle('shadow', { color: '#000000', alpha: 0.35, offsetX: 3, offsetY: 3, blur: 4 })}
+          >
+            {hasShadow && (
+              <EffectSliders
+                rows={[
+                  { label: 'Offset X', value: effects.shadow.offsetX ?? 3, min: -20, max: 20, onChange: (v) => onChange?.({ ...effects, shadow: { ...effects.shadow, offsetX: v } }) },
+                  { label: 'Offset Y', value: effects.shadow.offsetY ?? 3, min: -20, max: 20, onChange: (v) => onChange?.({ ...effects, shadow: { ...effects.shadow, offsetY: v } }) },
+                  { label: 'Blur', value: effects.shadow.blur ?? 4, min: 0, max: 30, onChange: (v) => onChange?.({ ...effects, shadow: { ...effects.shadow, blur: v } }) },
+                  { label: 'Opacity', value: Math.round((effects.shadow.alpha ?? 0.35) * 100), min: 0, max: 100, onChange: (v) => onChange?.({ ...effects, shadow: { ...effects.shadow, alpha: v / 100 } }) },
+                ]}
+              />
+            )}
+          </EffectSection>
+          <EffectSection
+            label="Glow"
+            enabled={hasGlow}
+            onToggle={() => toggle('glow', { color: '#ffea00', alpha: 0.6, radius: 5 })}
+          >
+            {hasGlow && (
+              <EffectSliders
+                rows={[
+                  { label: 'Radius', value: effects.glow.radius ?? 5, min: 0, max: 30, onChange: (v) => onChange?.({ ...effects, glow: { ...effects.glow, radius: v } }) },
+                  { label: 'Opacity', value: Math.round((effects.glow.alpha ?? 0.6) * 100), min: 0, max: 100, onChange: (v) => onChange?.({ ...effects, glow: { ...effects.glow, alpha: v / 100 } }) },
+                ]}
+              />
+            )}
+          </EffectSection>
+          <EffectSection
+            label="Soft Edges"
+            enabled={hasSoft}
+            onToggle={() => toggle('softEdge', { radius: 3 })}
+          >
+            {hasSoft && (
+              <EffectSliders
+                rows={[
+                  { label: 'Radius', value: effects.softEdge.radius ?? 3, min: 0, max: 20, onChange: (v) => onChange?.({ ...effects, softEdge: { ...effects.softEdge, radius: v } }) },
+                ]}
+              />
+            )}
+          </EffectSection>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TextEffectsMenu({ effects, disabled, onChange }) {
+  const [open, setOpen] = useState(false);
+  const panelRef = useRef(null);
+  const close = useCallback(() => setOpen(false), []);
+
+  useEffect(() => {
+    if (!open) return;
+    const handleClickOutside = (e) => {
+      if (panelRef.current && !panelRef.current.contains(e.target)) close();
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [open, close]);
+
+  const hasShadow = !!effects?.shadow;
+  const hasGlow = !!effects?.glow;
+  const any = hasShadow || hasGlow;
+
+  const toggle = (key, defaultVal) => {
+    const next = { ...(effects || {}) };
+    if (next[key]) delete next[key];
+    else next[key] = defaultVal;
+    onChange?.(next);
+  };
+
+  return (
+    <div ref={panelRef} className="relative flex items-center flex-shrink-0">
+      <button
+        disabled={disabled}
+        onClick={() => !disabled && setOpen((v) => !v)}
+        onMouseDown={(e) => e.preventDefault()}
+        className="flex items-center justify-center h-6 px-1 rounded cursor-pointer transition-colors gap-0.5"
+        style={{
+          color: any ? 'var(--color-accent)' : 'var(--color-text-muted)',
+          backgroundColor: any ? 'var(--color-accent-muted)' : 'transparent',
+          opacity: disabled ? 0.4 : 1,
+        }}
+        onMouseEnter={(e) => { if (!disabled) e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)'; }}
+        onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = any ? 'var(--color-accent-muted)' : 'transparent'; }}
+        title="Text effects"
+      >
+        <span className="text-[10px] font-semibold">Afx</span>
+        <ChevronDown size={9} style={{ opacity: 0.6 }} />
+      </button>
+      {open && (
+        <div
+          className="absolute top-full left-0 mt-1 py-2 rounded-md shadow-lg z-50"
+          style={{
+            backgroundColor: 'var(--color-bg-secondary)',
+            border: '1px solid var(--color-border)',
+            width: 240,
+          }}
+        >
+          <EffectSection
+            label="Shadow"
+            enabled={hasShadow}
+            onToggle={() => toggle('shadow', { color: '#000000', alpha: 0.6, offsetX: 1, offsetY: 1, blur: 2 })}
+          >
+            {hasShadow && (
+              <EffectSliders
+                rows={[
+                  { label: 'Offset X', value: effects.shadow.offsetX ?? 1, min: -10, max: 10, onChange: (v) => onChange?.({ ...effects, shadow: { ...effects.shadow, offsetX: v } }) },
+                  { label: 'Offset Y', value: effects.shadow.offsetY ?? 1, min: -10, max: 10, onChange: (v) => onChange?.({ ...effects, shadow: { ...effects.shadow, offsetY: v } }) },
+                  { label: 'Blur', value: effects.shadow.blur ?? 2, min: 0, max: 20, onChange: (v) => onChange?.({ ...effects, shadow: { ...effects.shadow, blur: v } }) },
+                  { label: 'Opacity', value: Math.round((effects.shadow.alpha ?? 0.6) * 100), min: 0, max: 100, onChange: (v) => onChange?.({ ...effects, shadow: { ...effects.shadow, alpha: v / 100 } }) },
+                ]}
+              />
+            )}
+          </EffectSection>
+          <EffectSection
+            label="Glow"
+            enabled={hasGlow}
+            onToggle={() => toggle('glow', { color: '#ffea00', alpha: 0.8, radius: 3 })}
+          >
+            {hasGlow && (
+              <EffectSliders
+                rows={[
+                  { label: 'Radius', value: effects.glow.radius ?? 3, min: 0, max: 20, onChange: (v) => onChange?.({ ...effects, glow: { ...effects.glow, radius: v } }) },
+                  { label: 'Opacity', value: Math.round((effects.glow.alpha ?? 0.8) * 100), min: 0, max: 100, onChange: (v) => onChange?.({ ...effects, glow: { ...effects.glow, alpha: v / 100 } }) },
+                ]}
+              />
+            )}
+          </EffectSection>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function EffectSection({ label, enabled, onToggle, children }) {
+  return (
+    <div className="px-3 py-1.5">
+      <label className="flex items-center gap-2 text-[11px] cursor-pointer" style={{ color: 'var(--color-text-primary)' }}>
+        <input type="checkbox" checked={enabled} onChange={onToggle} />
+        <span className="font-medium">{label}</span>
+      </label>
+      {children}
+    </div>
+  );
+}
+
+function EffectSliders({ rows }) {
+  return (
+    <div className="pl-5 pt-1 flex flex-col gap-1">
+      {rows.map((r) => (
+        <div key={r.label} className="flex items-center gap-2">
+          <span className="text-[10px]" style={{ color: 'var(--color-text-muted)', width: 54 }}>{r.label}</span>
+          <input
+            type="range"
+            min={r.min}
+            max={r.max}
+            value={r.value}
+            onChange={(e) => r.onChange(parseInt(e.target.value, 10))}
+            className="flex-1"
+          />
+          <span className="text-[10px] tabular-nums" style={{ color: 'var(--color-text-muted)', width: 28, textAlign: 'right' }}>
+            {r.value}
+          </span>
+        </div>
+      ))}
     </div>
   );
 }

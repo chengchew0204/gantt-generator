@@ -1,6 +1,8 @@
 import * as XLSX from 'xlsx';
 import { injectCellStyles } from './XlsxStyleInjector';
 import { extractNativeCellStyles } from './XlsxStyleExtractor';
+import { injectShapes } from './XlsxShapeInjector';
+import { extractShapes } from './XlsxShapeExtractor';
 
 // Bumped whenever the set of styles XlsxStyleInjector writes natively
 // changes. Files tagged with version >= 1 treat the native xlsx bytes as
@@ -8,6 +10,11 @@ import { extractNativeCellStyles } from './XlsxStyleExtractor';
 // fall back to the gridCellStyles JSON blob. See ADR 003.
 const NATIVE_CELL_STYLES_VERSION = '1';
 const NATIVE_STYLE_KEYS = ['hAlign', 'vAlign', 'bold', 'italic', 'underline'];
+
+// Mirror of NATIVE_CELL_STYLES_VERSION for the DrawingML shape codec.
+// Files tagged with version >= 1 treat the embedded DrawingML parts as
+// authoritative for shape geometry / styling. See ADR 004.
+const NATIVE_SHAPES_VERSION = '1';
 
 const TASK_COLUMNS = [
   'Task ID',
@@ -68,6 +75,8 @@ const SETTINGS_FIELDS = [
   { key: 'activeTab', label: 'Active Tab', defaultValue: 'gantt' },
   { key: 'gridCellStyles', label: 'Grid Cell Styles', defaultValue: '{}' },
   { key: 'nativeCellStylesVersion', label: 'Native Cell Styles Version', defaultValue: '0' },
+  { key: 'gridShapes', label: 'Grid Shapes', defaultValue: '{}' },
+  { key: 'nativeShapesVersion', label: 'Native Shapes Version', defaultValue: '0' },
 ];
 
 export function downloadTemplate() {
@@ -172,6 +181,9 @@ export async function importExcel(file) {
   let gridCellStyles = {};
   try { gridCellStyles = JSON.parse(settings.gridCellStyles || '{}'); } catch { /* ignore */ }
 
+  let gridShapes = {};
+  try { gridShapes = JSON.parse(settings.gridShapes || '{}'); } catch { /* ignore */ }
+
   // Read font toggles (bold / italic / underline) and alignment straight
   // from the xlsx XML. SheetJS Community does not expose these on
   // wsCell.s, so this is how Excel-native edits round-trip back into the
@@ -180,7 +192,20 @@ export async function importExcel(file) {
   const fileVersion = parseInt(settings.nativeCellStylesVersion || '0', 10) || 0;
   const nativeAuthoritative = fileVersion >= 1;
 
-  const gridData = parseGridSheets(wb, tabs, gridCellStyles, nativeSheetStyles, nativeAuthoritative);
+  const shapesVersion = parseInt(settings.nativeShapesVersion || '0', 10) || 0;
+  const nativeShapesAuthoritative = shapesVersion >= 1;
+  const nativeSheetShapes = nativeShapesAuthoritative ? extractShapes(data) : {};
+
+  const gridData = parseGridSheets(
+    wb,
+    tabs,
+    gridCellStyles,
+    nativeSheetStyles,
+    nativeAuthoritative,
+    gridShapes,
+    nativeSheetShapes,
+    nativeShapesAuthoritative,
+  );
 
   return { tasks, settings, gridData, tabs };
 }
@@ -233,6 +258,8 @@ function buildWorkbook(tasks, settings, gridData) {
     let value;
     if (field.key === 'nativeCellStylesVersion') {
       value = NATIVE_CELL_STYLES_VERSION;
+    } else if (field.key === 'nativeShapesVersion') {
+      value = NATIVE_SHAPES_VERSION;
     } else {
       value =
         settings && settings[field.key] != null
@@ -324,6 +351,32 @@ function collectSheetStyles(settings, gridData) {
   return out;
 }
 
+/**
+ * Collect shapes per sheet for the OOXML DrawingML injector. The shapes
+ * carry dimensions in pixels in app-space; the injector converts to EMU
+ * and emits `<xdr:twoCellAnchor editAs="absolute">` entries anchored via
+ * the DataGrid's column / row offsets.
+ */
+function collectSheetShapes(settings, gridData) {
+  if (!gridData) return {};
+  let tabs = [];
+  try { tabs = JSON.parse(settings?.tabs || '[]'); } catch { /* ignore */ }
+  const out = {};
+  for (const tab of tabs) {
+    const tabData = gridData[tab.id];
+    if (!tabData || !Array.isArray(tabData.shapes) || tabData.shapes.length === 0) continue;
+    const sheetName = sanitizeSheetName(tab.name);
+    out[sheetName] = {
+      shapes: tabData.shapes,
+      colWidths: tabData.colWidths || {},
+      rowHeights: tabData.rowHeights || {},
+      cols: tabData.cols || 26,
+      rows: tabData.rows || 50,
+    };
+  }
+  return out;
+}
+
 function uint8ToBase64(bytes) {
   const CHUNK = 0x8000;
   let binary = '';
@@ -358,7 +411,9 @@ export function exportExcel(tasks, settings, filename = 'GanttGen_Project.xlsx',
   const wb = buildWorkbook(tasks, settings, gridData);
   const rawBytes = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
   const sheetStyles = collectSheetStyles(settings, gridData);
-  const patched = injectCellStyles(rawBytes, sheetStyles);
+  let patched = injectCellStyles(rawBytes, sheetStyles);
+  const sheetShapes = collectSheetShapes(settings, gridData);
+  patched = injectShapes(patched, sheetShapes);
   downloadXlsxBytes(patched, filename);
 }
 
@@ -374,7 +429,9 @@ export function exportExcelToBase64(tasks, settings, gridData) {
   const wb = buildWorkbook(tasks, settings, gridData);
   const rawBytes = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
   const sheetStyles = collectSheetStyles(settings, gridData);
-  const patched = injectCellStyles(rawBytes, sheetStyles);
+  let patched = injectCellStyles(rawBytes, sheetStyles);
+  const sheetShapes = collectSheetShapes(settings, gridData);
+  patched = injectShapes(patched, sheetShapes);
   return uint8ToBase64(patched);
 }
 
@@ -638,7 +695,16 @@ function gridDataToSheet(tabData) {
   return ws;
 }
 
-function parseGridSheets(wb, tabs, gridCellStyles = {}, nativeSheetStyles = {}, nativeAuthoritative = false) {
+function parseGridSheets(
+  wb,
+  tabs,
+  gridCellStyles = {},
+  nativeSheetStyles = {},
+  nativeAuthoritative = false,
+  gridShapes = {},
+  nativeSheetShapes = {},
+  nativeShapesAuthoritative = false,
+) {
   const gridData = {};
   if (!tabs || tabs.length === 0) return gridData;
 
@@ -753,6 +819,15 @@ function parseGridSheets(wb, tabs, gridCellStyles = {}, nativeSheetStyles = {}, 
       }
     }
 
+    // Shapes: prefer native DrawingML when the file is tagged authoritative
+    // (v >= 1). Otherwise fall back to the JSON blob in the Settings sheet.
+    let shapesForTab = [];
+    if (nativeShapesAuthoritative && nativeSheetShapes[sheetName]) {
+      shapesForTab = nativeSheetShapes[sheetName];
+    } else if (Array.isArray(gridShapes[tab.id])) {
+      shapesForTab = gridShapes[tab.id];
+    }
+
     gridData[tab.id] = {
       rows: Math.max(maxRow + 10, 50),
       cols: Math.max(maxCol + 5, 26),
@@ -760,6 +835,7 @@ function parseGridSheets(wb, tabs, gridCellStyles = {}, nativeSheetStyles = {}, 
       colWidths: importedColWidths,
       rowHeights: importedRowHeights,
       merges: importedMerges,
+      shapes: shapesForTab,
       showGridLines: true,
     };
   }

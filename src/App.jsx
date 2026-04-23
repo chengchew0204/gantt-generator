@@ -638,7 +638,7 @@ export default function App() {
     setTabs((prev) => [...prev, { id, name }]);
     setGridData((prev) => ({
       ...prev,
-      [id]: { rows: 50, cols: 26, cells: {}, colWidths: {}, merges: [] },
+      [id]: { rows: 50, cols: 26, cells: {}, colWidths: {}, merges: [], shapes: [] },
     }));
     setActiveTab(id);
     markDirty();
@@ -756,18 +756,25 @@ export default function App() {
       next.tabs = JSON.stringify(tabs);
       next.activeTab = activeTab;
       const stylesMap = {};
+      const shapesMap = {};
       for (const tab of tabs) {
         const tabData = gridData[tab.id];
-        if (!tabData?.cells) continue;
-        const tabStyles = {};
-        for (const [cellRef, cell] of Object.entries(tabData.cells)) {
-          if (cell.s && Object.keys(cell.s).length > 0) {
-            tabStyles[cellRef] = cell.s;
+        if (!tabData) continue;
+        if (tabData.cells) {
+          const tabStyles = {};
+          for (const [cellRef, cell] of Object.entries(tabData.cells)) {
+            if (cell.s && Object.keys(cell.s).length > 0) {
+              tabStyles[cellRef] = cell.s;
+            }
           }
+          if (Object.keys(tabStyles).length > 0) stylesMap[tab.id] = tabStyles;
         }
-        if (Object.keys(tabStyles).length > 0) stylesMap[tab.id] = tabStyles;
+        if (Array.isArray(tabData.shapes) && tabData.shapes.length > 0) {
+          shapesMap[tab.id] = tabData.shapes;
+        }
       }
       next.gridCellStyles = JSON.stringify(stylesMap);
+      next.gridShapes = JSON.stringify(shapesMap);
       return next;
     });
   }, [viewOptions, visibleColumns, categoryColors, projectName, customColumns, columnOrder, splitRatio, collapsedParents, colWidths, ganttScale, ganttZoom, tabs, activeTab, gridData]);
