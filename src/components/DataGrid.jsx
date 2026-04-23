@@ -1,6 +1,12 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { createFormulaEngine } from '../utils/FormulaEngine';
 import SpreadsheetToolbar from './SpreadsheetToolbar';
+import ShapeLayer, {
+  nudgeShapes,
+  deleteShapes,
+  duplicateShapes,
+  reorderShape,
+} from './ShapeLayer';
 
 const DEFAULT_ROW_HEIGHT = 26;
 const HEADER_HEIGHT = 28;
@@ -124,6 +130,35 @@ function rectEquals(a, b) {
   return a.r1 === b.r1 && a.c1 === b.c1 && a.r2 === b.r2 && a.c2 === b.c2;
 }
 
+function mergeShapeStyle(current, partial) {
+  const base = current || {};
+  const next = { ...base };
+  if (partial.fill !== undefined) {
+    next.fill = { ...(base.fill || {}), ...partial.fill };
+  }
+  if (partial.outline !== undefined) {
+    next.outline = { ...(base.outline || {}), ...partial.outline };
+  }
+  if (partial.effects !== undefined) {
+    next.effects = partial.effects;
+  }
+  return next;
+}
+
+function mergeTextStyle(current, partial) {
+  const base = current || {};
+  const next = { ...base };
+  for (const k of Object.keys(partial)) {
+    if (k === 'fill' || k === 'outline' || k === 'effects') {
+      if (k === 'effects') next[k] = partial[k];
+      else next[k] = { ...(base[k] || {}), ...partial[k] };
+    } else {
+      next[k] = partial[k];
+    }
+  }
+  return next;
+}
+
 function parseFormulaRefs(text) {
   if (!text || !text.startsWith('=')) return {};
   const highlights = {};
@@ -150,6 +185,7 @@ export default function DataGrid({ data, onChange }) {
   const gridRowHeights = data?.rowHeights ?? {};
   const showGridLines = data?.showGridLines !== false;
   const merges = useMemo(() => data?.merges ?? [], [data?.merges]);
+  const shapes = useMemo(() => data?.shapes ?? [], [data?.shapes]);
 
   const [editingCell, setEditingCell] = useState(null);
   const [selectedCell, setSelectedCell] = useState(null);
@@ -157,6 +193,9 @@ export default function DataGrid({ data, onChange }) {
   const [editText, setEditText] = useState('');
   const [colWidths, setColWidths] = useState(gridColWidths);
   const [rowHeights, setRowHeights] = useState(gridRowHeights);
+  const [selectedShapeIds, setSelectedShapeIds] = useState([]);
+  const [shapeMode, setShapeMode] = useState(null);
+  const [editingShapeTextId, setEditingShapeTextId] = useState(null);
 
   const cellInputRef = useRef(null);
   const barInputRef = useRef(null);
@@ -389,7 +428,113 @@ export default function DataGrid({ data, onChange }) {
     });
   }, [editText]);
 
+  const handleShapesChange = useCallback(
+    (nextShapes) => {
+      if (!onChange) return;
+      onChange({ ...data, shapes: nextShapes });
+    },
+    [onChange, data],
+  );
+
+  const handleSelectShape = useCallback((ids) => {
+    setSelectedShapeIds(Array.isArray(ids) ? ids : []);
+    if (ids && ids.length > 0) {
+      setSelectedCell(null);
+      setSelectionEnd(null);
+      setEditingShapeTextId(null);
+      containerRef.current?.focus({ preventScroll: true });
+    }
+  }, []);
+
+  const clearShapeSelection = useCallback(() => {
+    setSelectedShapeIds([]);
+    setEditingShapeTextId(null);
+  }, []);
+
+  const handleExitShapeMode = useCallback(() => {
+    setShapeMode(null);
+  }, []);
+
+  const handleSetShapeMode = useCallback((id) => {
+    setShapeMode(id || null);
+    if (id) {
+      setSelectedShapeIds([]);
+      setEditingShapeTextId(null);
+    }
+  }, []);
+
+  const handleBeginTextEdit = useCallback((id) => {
+    setEditingShapeTextId(id);
+  }, []);
+
+  const handleCommitShapeText = useCallback(
+    (id, text) => {
+      setEditingShapeTextId(null);
+      const next = shapes.map((s) =>
+        s.id === id ? { ...s, text: { ...(s.text || {}), value: text } } : s,
+      );
+      handleShapesChange(next);
+      requestAnimationFrame(() => containerRef.current?.focus({ preventScroll: true }));
+    },
+    [shapes, handleShapesChange],
+  );
+
+  const applyShapeStyle = useCallback(
+    (partial) => {
+      if (selectedShapeIds.length === 0) return;
+      const idSet = new Set(selectedShapeIds);
+      const next = shapes.map((s) => {
+        if (!idSet.has(s.id)) return s;
+        return { ...s, style: mergeShapeStyle(s.style, partial) };
+      });
+      handleShapesChange(next);
+    },
+    [selectedShapeIds, shapes, handleShapesChange],
+  );
+
+  const applyTextStyle = useCallback(
+    (partial) => {
+      if (selectedShapeIds.length === 0) return;
+      const idSet = new Set(selectedShapeIds);
+      const next = shapes.map((s) => {
+        if (!idSet.has(s.id)) return s;
+        return { ...s, textStyle: mergeTextStyle(s.textStyle, partial) };
+      });
+      handleShapesChange(next);
+    },
+    [selectedShapeIds, shapes, handleShapesChange],
+  );
+
+  const handleToggleShapeTextFormat = useCallback(
+    (key) => {
+      if (selectedShapeIds.length === 0) return;
+      const target = shapes.find((s) => s.id === selectedShapeIds[0]);
+      const current = target?.textStyle?.[key];
+      applyTextStyle({ [key]: !current });
+    },
+    [selectedShapeIds, shapes, applyTextStyle],
+  );
+
+  const handleArrange = useCallback(
+    (direction) => {
+      if (selectedShapeIds.length === 0) return;
+      let next = shapes;
+      for (const id of selectedShapeIds) {
+        next = reorderShape(next, id, direction);
+      }
+      handleShapesChange(next);
+    },
+    [selectedShapeIds, shapes, handleShapesChange],
+  );
+
+  const handleDeleteSelectedShapes = useCallback(() => {
+    if (selectedShapeIds.length === 0) return;
+    handleShapesChange(deleteShapes(shapes, selectedShapeIds));
+    setSelectedShapeIds([]);
+  }, [selectedShapeIds, shapes, handleShapesChange]);
+
   const handleCellMouseDown = useCallback((e, row, col) => {
+    clearShapeSelection();
     if (isFormulaEditing) {
       const clickedKey = cellKey(row, col);
       const editingKey = editingCell ? cellKey(editingCell.row, editingCell.col) : null;
@@ -453,7 +598,7 @@ export default function DataGrid({ data, onChange }) {
 
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
-  }, [isFormulaEditing, editingCell, editText, insertReference, commitEdit, cols, rows, getColW, getRowH, getMergeAt]);
+  }, [isFormulaEditing, editingCell, editText, insertReference, commitEdit, cols, rows, getColW, getRowH, getMergeAt, clearShapeSelection]);
 
   const handleCellClick = useCallback(() => {
     // Selection is handled entirely in handleCellMouseDown now.
@@ -552,6 +697,31 @@ export default function DataGrid({ data, onChange }) {
   }, [editingCell, editText, commitEdit, cancelEditing, rows, cols, isFormulaEditing]);
 
   const applyStyleToSelected = useCallback((partialStyle) => {
+    // Route font toggles + font size + font color + text bg to the
+    // selected shape's textStyle when a shape is the active selection;
+    // otherwise update cell styles as before. Matches Excel's dual-role
+    // behaviour where the format ribbon targets the shape text when a
+    // shape is selected.
+    if (selectedShapeIds.length > 0) {
+      const textPartial = {};
+      if (partialStyle.bold !== undefined) textPartial.bold = partialStyle.bold;
+      if (partialStyle.italic !== undefined) textPartial.italic = partialStyle.italic;
+      if (partialStyle.underline !== undefined) textPartial.underline = partialStyle.underline;
+      if (partialStyle.fontSize !== undefined) textPartial.fontSize = partialStyle.fontSize;
+      if (partialStyle.color !== undefined) textPartial.fill = { color: partialStyle.color, alpha: 1 };
+      if (partialStyle.hAlign !== undefined) textPartial.hAlign = partialStyle.hAlign;
+      if (partialStyle.vAlign !== undefined) textPartial.vAlign = partialStyle.vAlign;
+      // bg is ignored on shapes (use Shape Fill instead).
+      if (Object.keys(textPartial).length === 0) return;
+      const idSet = new Set(selectedShapeIds);
+      const next = shapes.map((s) => {
+        if (!idSet.has(s.id)) return s;
+        return { ...s, textStyle: mergeTextStyle(s.textStyle, textPartial) };
+      });
+      handleShapesChange(next);
+      return;
+    }
+
     if (!selRect || !onChange) return;
     const updated = { ...cells };
     for (let r = selRect.r1; r <= selRect.r2; r++) {
@@ -562,9 +732,68 @@ export default function DataGrid({ data, onChange }) {
       }
     }
     onChange({ ...data, cells: updated });
-  }, [selRect, cells, onChange, data]);
+  }, [selectedShapeIds, shapes, handleShapesChange, selRect, cells, onChange, data]);
 
   const handleGridKeyDown = useCallback((e) => {
+    if (editingShapeTextId) return;
+
+    if (selectedShapeIds.length > 0) {
+      const step = e.shiftKey ? 10 : 1;
+      if ((e.ctrlKey || e.metaKey)) {
+        if (e.key === 'b' || e.key === 'B') {
+          e.preventDefault();
+          const cur = shapes.find((s) => s.id === selectedShapeIds[0])?.textStyle?.bold;
+          applyStyleToSelected({ bold: !cur });
+          return;
+        }
+        if ((e.key === 'i' || e.key === 'I') && !e.shiftKey) {
+          e.preventDefault();
+          const cur = shapes.find((s) => s.id === selectedShapeIds[0])?.textStyle?.italic;
+          applyStyleToSelected({ italic: !cur });
+          return;
+        }
+        if (e.key === 'u' || e.key === 'U') {
+          e.preventDefault();
+          const cur = shapes.find((s) => s.id === selectedShapeIds[0])?.textStyle?.underline;
+          applyStyleToSelected({ underline: !cur });
+          return;
+        }
+      }
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        e.preventDefault();
+        handleDeleteSelectedShapes();
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        clearShapeSelection();
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'd' || e.key === 'D')) {
+        e.preventDefault();
+        const { shapes: next, newIds } = duplicateShapes(shapes, selectedShapeIds);
+        handleShapesChange(next);
+        setSelectedShapeIds(newIds);
+        return;
+      }
+      if (e.key === 'ArrowUp')    { e.preventDefault(); handleShapesChange(nudgeShapes(shapes, selectedShapeIds, 0, -step)); return; }
+      if (e.key === 'ArrowDown')  { e.preventDefault(); handleShapesChange(nudgeShapes(shapes, selectedShapeIds, 0, step));  return; }
+      if (e.key === 'ArrowLeft')  { e.preventDefault(); handleShapesChange(nudgeShapes(shapes, selectedShapeIds, -step, 0)); return; }
+      if (e.key === 'ArrowRight') { e.preventDefault(); handleShapesChange(nudgeShapes(shapes, selectedShapeIds, step, 0));  return; }
+      if (e.key === 'Enter' || e.key === 'F2') {
+        e.preventDefault();
+        if (selectedShapeIds.length === 1) setEditingShapeTextId(selectedShapeIds[0]);
+        return;
+      }
+      return;
+    }
+
+    if (shapeMode && e.key === 'Escape') {
+      e.preventDefault();
+      setShapeMode(null);
+      return;
+    }
+
     if (!selectedCell) return;
     const { row, col } = selectedCell;
 
@@ -660,6 +889,14 @@ export default function DataGrid({ data, onChange }) {
     onChange,
     data,
     getMergeAt,
+    selectedShapeIds,
+    shapes,
+    shapeMode,
+    editingShapeTextId,
+    handleDeleteSelectedShapes,
+    clearShapeSelection,
+    handleShapesChange,
+    applyStyleToSelected,
   ]);
 
   const handleStartBarEdit = useCallback(() => {
@@ -891,6 +1128,10 @@ export default function DataGrid({ data, onChange }) {
     return ROW_HEADER_WIDTH + Array.from({ length: cols }, (_, i) => getColW(i)).reduce((a, b) => a + b, 0);
   }, [cols, getColW]);
 
+  const totalHeight = useMemo(() => {
+    return HEADER_HEIGHT + Array.from({ length: rows }, (_, i) => getRowH(i)).reduce((a, b) => a + b, 0);
+  }, [rows, getRowH]);
+
   const colOffsets = useMemo(() => {
     const arr = new Array(cols + 1);
     arr[0] = 0;
@@ -912,6 +1153,30 @@ export default function DataGrid({ data, onChange }) {
     ? `${cellKey(selRect.r1, selRect.c1)}:${cellKey(selRect.r2, selRect.c2)}`
     : selectedKey;
 
+  const primarySelectedShape = useMemo(() => {
+    if (selectedShapeIds.length === 0) return null;
+    return shapes.find((s) => s.id === selectedShapeIds[0]) || null;
+  }, [selectedShapeIds, shapes]);
+
+  // When a shape is selected, present its textStyle to the shared
+  // Bold/Italic/Underline/fontSize/font-colour controls. Otherwise fall
+  // back to the cell style as usual.
+  const toolbarStyle = useMemo(() => {
+    if (primarySelectedShape) {
+      const ts = primarySelectedShape.textStyle || {};
+      return {
+        bold: !!ts.bold,
+        italic: !!ts.italic,
+        underline: !!ts.underline,
+        fontSize: ts.fontSize,
+        color: ts.fill?.color,
+        hAlign: ts.hAlign,
+        vAlign: ts.vAlign,
+      };
+    }
+    return selectedCellData?.s;
+  }, [primarySelectedShape, selectedCellData]);
+
   const borderStyle = showGridLines ? '1px solid var(--color-border-subtle)' : '1px solid transparent';
 
   return (
@@ -931,7 +1196,7 @@ export default function DataGrid({ data, onChange }) {
         onStartBarEdit={handleStartBarEdit}
         onBarKeyDown={handleEditKeyDown}
         barInputRef={barInputRef}
-        cellStyle={selectedCellData?.s}
+        cellStyle={toolbarStyle}
         onApplyStyle={applyStyleToSelected}
         onApplyBorderPreset={handleApplyBorderPreset}
         onToggleGridLines={handleToggleGridLines}
@@ -939,6 +1204,13 @@ export default function DataGrid({ data, onChange }) {
         onMerge={handleMerge}
         onUnmerge={handleUnmerge}
         isMergedSelection={!!mergedSelection}
+        shapeMode={shapeMode}
+        onSetShapeMode={handleSetShapeMode}
+        selectedShape={primarySelectedShape}
+        onApplyShapeStyle={applyShapeStyle}
+        onApplyTextStyle={applyTextStyle}
+        onArrange={handleArrange}
+        onDeleteShape={handleDeleteSelectedShapes}
       />
 
       {/* Grid */}
@@ -1249,6 +1521,25 @@ export default function DataGrid({ data, onChange }) {
               </div>
             );
           })}
+
+          <ShapeLayer
+            shapes={shapes}
+            selectedIds={selectedShapeIds}
+            shapeMode={shapeMode}
+            colOffsets={colOffsets}
+            rowOffsets={rowOffsets}
+            rowHeaderWidth={ROW_HEADER_WIDTH}
+            headerHeight={HEADER_HEIGHT}
+            totalWidth={totalWidth}
+            totalHeight={totalHeight}
+            onChange={handleShapesChange}
+            onSelect={handleSelectShape}
+            onExitShapeMode={handleExitShapeMode}
+            editingTextId={editingShapeTextId}
+            onBeginTextEdit={handleBeginTextEdit}
+            onCommitText={handleCommitShapeText}
+            onToggleTextFormat={handleToggleShapeTextFormat}
+          />
         </div>
       </div>
 
