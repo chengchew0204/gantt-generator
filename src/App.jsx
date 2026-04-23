@@ -876,9 +876,11 @@ export default function App() {
         : [];
       setColumnOrder(restoredOrder.length > 0 ? restoredOrder : ALL_COLUMNS.map((c) => c.key));
 
-      let restoredTabs = [];
-      try { restoredTabs = JSON.parse(s.tabs || '[]'); } catch { /* ignore */ }
-      setTabs(Array.isArray(restoredTabs) ? restoredTabs : []);
+      // Use the tabs list returned by importExcel - it reflects both
+      // the persisted tab order from the Settings sheet AND any new
+      // non-reserved worksheets the user added directly in Excel.
+      const restoredTabs = Array.isArray(result.tabs) ? result.tabs : [];
+      setTabs(restoredTabs);
       setActiveTab(s.activeTab || 'gantt');
 
       let restored = {};

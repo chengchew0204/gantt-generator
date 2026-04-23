@@ -1,4 +1,13 @@
 import * as XLSX from 'xlsx';
+import { injectCellStyles } from './XlsxStyleInjector';
+import { extractNativeCellStyles } from './XlsxStyleExtractor';
+
+// Bumped whenever the set of styles XlsxStyleInjector writes natively
+// changes. Files tagged with version >= 1 treat the native xlsx bytes as
+// authoritative for the keys listed in NATIVE_STYLE_KEYS; older files
+// fall back to the gridCellStyles JSON blob. See ADR 003.
+const NATIVE_CELL_STYLES_VERSION = '1';
+const NATIVE_STYLE_KEYS = ['hAlign', 'vAlign', 'bold', 'italic', 'underline'];
 
 const TASK_COLUMNS = [
   'Task ID',
@@ -58,6 +67,7 @@ const SETTINGS_FIELDS = [
   { key: 'tabs', label: 'Tabs', defaultValue: '[]' },
   { key: 'activeTab', label: 'Active Tab', defaultValue: 'gantt' },
   { key: 'gridCellStyles', label: 'Grid Cell Styles', defaultValue: '{}' },
+  { key: 'nativeCellStylesVersion', label: 'Native Cell Styles Version', defaultValue: '0' },
 ];
 
 export function downloadTemplate() {
@@ -142,13 +152,37 @@ export async function importExcel(file) {
 
   let tabs = [];
   try { tabs = JSON.parse(settings.tabs || '[]'); } catch { /* ignore */ }
+  if (!Array.isArray(tabs)) tabs = [];
+
+  // Auto-adopt any non-reserved worksheet the user created directly in
+  // Excel (or any other OOXML tool) that the Settings-sheet tab list
+  // has not caught up with. Without this the sheet's data is parsed
+  // but the tab never appears in the UI because parseGridSheets keys
+  // gridData by tab.id and App.jsx reads its tab list from settings.tabs.
+  const knownTabNames = new Set(tabs.map((t) => t && t.name).filter(Boolean));
+  const adoptStamp = Date.now().toString(36);
+  let adoptIndex = 0;
+  for (const sheetName of wb.SheetNames) {
+    if (RESERVED_SHEETS.has(sheetName.toLowerCase())) continue;
+    if (knownTabNames.has(sheetName)) continue;
+    tabs.push({ id: `tab_${adoptStamp}_${adoptIndex++}`, name: sheetName });
+    knownTabNames.add(sheetName);
+  }
 
   let gridCellStyles = {};
   try { gridCellStyles = JSON.parse(settings.gridCellStyles || '{}'); } catch { /* ignore */ }
 
-  const gridData = parseGridSheets(wb, tabs, gridCellStyles);
+  // Read font toggles (bold / italic / underline) and alignment straight
+  // from the xlsx XML. SheetJS Community does not expose these on
+  // wsCell.s, so this is how Excel-native edits round-trip back into the
+  // app. Extractor is best-effort: returns {} if the archive is unusable.
+  const nativeSheetStyles = extractNativeCellStyles(data);
+  const fileVersion = parseInt(settings.nativeCellStylesVersion || '0', 10) || 0;
+  const nativeAuthoritative = fileVersion >= 1;
 
-  return { tasks, settings, gridData };
+  const gridData = parseGridSheets(wb, tabs, gridCellStyles, nativeSheetStyles, nativeAuthoritative);
+
+  return { tasks, settings, gridData, tabs };
 }
 
 /**
@@ -193,10 +227,18 @@ function buildWorkbook(tasks, settings, gridData) {
 
   const settingsRows = [['Setting', 'Value']];
   for (const field of SETTINGS_FIELDS) {
-    const value =
-      settings && settings[field.key] != null
-        ? String(settings[field.key])
-        : field.defaultValue;
+    // The injector runs unconditionally on export, so every file produced
+    // by this build advertises the current native-styles format version.
+    // Any value the caller passes for this key is intentionally ignored.
+    let value;
+    if (field.key === 'nativeCellStylesVersion') {
+      value = NATIVE_CELL_STYLES_VERSION;
+    } else {
+      value =
+        settings && settings[field.key] != null
+          ? String(settings[field.key])
+          : field.defaultValue;
+    }
     settingsRows.push([field.label, value]);
   }
   const settingsSheet = XLSX.utils.aoa_to_sheet(settingsRows);
@@ -242,6 +284,71 @@ function buildWorkbook(tasks, settings, gridData) {
 }
 
 /**
+ * Collect the cells in each grid tab that carry Excel-native-visible
+ * formatting so the xlsx byte stream can be post-processed to embed them.
+ * SheetJS Community does not emit cell styles on write, so formatting
+ * applied via the toolbar is lost to other spreadsheet apps (Excel,
+ * LibreOffice, Google Sheets) without this step. The GanttGen-internal
+ * round-trip via `gridCellStyles` is unaffected.
+ *
+ * Returns only the subset of `cell.s` that XlsxStyleInjector currently
+ * knows how to write: horizontal / vertical alignment and the three font
+ * toggles (bold, italic, underline).
+ */
+function collectSheetStyles(settings, gridData) {
+  if (!gridData) return {};
+  let tabs = [];
+  try { tabs = JSON.parse(settings?.tabs || '[]'); } catch { /* ignore */ }
+  const out = {};
+  for (const tab of tabs) {
+    const tabData = gridData[tab.id];
+    if (!tabData?.cells) continue;
+    const sheetName = sanitizeSheetName(tab.name);
+    const cellStyles = {};
+    for (const [cellRef, cell] of Object.entries(tabData.cells)) {
+      const s = cell?.s;
+      if (!s) continue;
+      const picked = {};
+      if (s.hAlign) picked.hAlign = s.hAlign;
+      if (s.vAlign) picked.vAlign = s.vAlign;
+      if (s.bold) picked.bold = true;
+      if (s.italic) picked.italic = true;
+      if (s.underline) picked.underline = true;
+      if (Object.keys(picked).length === 0) continue;
+      cellStyles[cellRef] = picked;
+    }
+    if (Object.keys(cellStyles).length > 0) {
+      out[sheetName] = cellStyles;
+    }
+  }
+  return out;
+}
+
+function uint8ToBase64(bytes) {
+  const CHUNK = 0x8000;
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(binary);
+}
+
+function downloadXlsxBytes(bytes, filename) {
+  const blob = new Blob([bytes], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  // Delay revoke so Safari/Firefox have time to start the download.
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/**
  * @param {object[]} tasks
  * @param {object} settings
  * @param {string} [filename='GanttGen_Project.xlsx']
@@ -249,7 +356,10 @@ function buildWorkbook(tasks, settings, gridData) {
  */
 export function exportExcel(tasks, settings, filename = 'GanttGen_Project.xlsx', gridData) {
   const wb = buildWorkbook(tasks, settings, gridData);
-  XLSX.writeFile(wb, filename);
+  const rawBytes = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+  const sheetStyles = collectSheetStyles(settings, gridData);
+  const patched = injectCellStyles(rawBytes, sheetStyles);
+  downloadXlsxBytes(patched, filename);
 }
 
 /**
@@ -262,7 +372,10 @@ export function exportExcel(tasks, settings, filename = 'GanttGen_Project.xlsx',
  */
 export function exportExcelToBase64(tasks, settings, gridData) {
   const wb = buildWorkbook(tasks, settings, gridData);
-  return XLSX.write(wb, { type: 'base64', bookType: 'xlsx' });
+  const rawBytes = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+  const sheetStyles = collectSheetStyles(settings, gridData);
+  const patched = injectCellStyles(rawBytes, sheetStyles);
+  return uint8ToBase64(patched);
 }
 
 
@@ -507,7 +620,7 @@ function gridDataToSheet(tabData) {
   return ws;
 }
 
-function parseGridSheets(wb, tabs, gridCellStyles = {}) {
+function parseGridSheets(wb, tabs, gridCellStyles = {}, nativeSheetStyles = {}, nativeAuthoritative = false) {
   const gridData = {};
   if (!tabs || tabs.length === 0) return gridData;
 
@@ -551,12 +664,38 @@ function parseGridSheets(wb, tabs, gridCellStyles = {}) {
       }
     }
 
-    const tabStyles = gridCellStyles[tab.id];
-    if (tabStyles) {
-      for (const [cellRef, style] of Object.entries(tabStyles)) {
-        if (!cells[cellRef]) cells[cellRef] = { v: '' };
-        cells[cellRef].s = style;
+    // Merge per-cell styles from two sources:
+    //   1. gridCellStyles JSON blob written to the Settings sheet by
+    //      earlier app versions. Authoritative for keys NOT covered by
+    //      the native injector (color, bg, fontSize, borders).
+    //   2. Native xlsx styles extracted directly from the XML by
+    //      XlsxStyleExtractor. Authoritative for NATIVE_STYLE_KEYS when
+    //      the file was produced by an injector-aware build
+    //      (nativeAuthoritative === true).
+    //
+    // Cells whose ONLY effect is a style (no value, no formula) are
+    // materialised here with v: '' so the grid still renders the
+    // formatting when the user scrolls to them.
+    const tabStyles = gridCellStyles[tab.id] || {};
+    const sheetNative = nativeSheetStyles[sheetName] || {};
+    const styledRefs = new Set([
+      ...Object.keys(tabStyles),
+      ...Object.keys(sheetNative),
+    ]);
+    for (const cellRef of styledRefs) {
+      const json = tabStyles[cellRef] || {};
+      const native = sheetNative[cellRef] || {};
+      const merged = { ...json };
+      if (nativeAuthoritative) {
+        // Excel XML is the source of truth for the keys it covers. Drop
+        // any stale values the JSON blob held on to so that styles the
+        // user removed in Excel do not re-materialise on import.
+        for (const k of NATIVE_STYLE_KEYS) delete merged[k];
       }
+      Object.assign(merged, native);
+      if (Object.keys(merged).length === 0) continue;
+      if (!cells[cellRef]) cells[cellRef] = { v: '' };
+      cells[cellRef].s = merged;
     }
 
     const importedColWidths = {};
