@@ -25,6 +25,18 @@ function cellKey(row, col) {
   return `${colLabel(col)}${row + 1}`;
 }
 
+const H_ALIGN_TO_JUSTIFY = {
+  left: 'flex-start',
+  center: 'center',
+  right: 'flex-end',
+};
+
+const V_ALIGN_TO_ITEMS = {
+  top: 'flex-start',
+  middle: 'center',
+  bottom: 'flex-end',
+};
+
 function cellStyleToCss(s) {
   if (!s) return {};
   const css = {};
@@ -34,6 +46,13 @@ function cellStyleToCss(s) {
   if (s.fontSize) css.fontSize = s.fontSize;
   if (s.color) css.color = s.color;
   if (s.bg) css.backgroundColor = s.bg;
+  if (s.hAlign && H_ALIGN_TO_JUSTIFY[s.hAlign]) {
+    css.justifyContent = H_ALIGN_TO_JUSTIFY[s.hAlign];
+    css.textAlign = s.hAlign;
+  }
+  if (s.vAlign && V_ALIGN_TO_ITEMS[s.vAlign]) {
+    css.alignItems = V_ALIGN_TO_ITEMS[s.vAlign];
+  }
   return css;
 }
 
