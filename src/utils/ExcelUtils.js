@@ -211,21 +211,27 @@ function buildWorkbook(tasks, settings, gridData) {
       const sheetName = sanitizeSheetName(tab.name);
       const gridSheet = gridDataToSheet(tabData);
       // Persist column widths in pixels (wpx) so the round-trip is exact.
-      // Only entries that differ from the app default are written; this
-      // lets unresized columns keep their default size on re-import.
-      if (tabData.colWidths) {
+      // Only entries that differ from the app default are written; this lets
+      // unresized columns keep their default size on re-import. Unresized
+      // columns are emitted as null (not {}) so SheetJS skips them entirely.
+      // An empty `{}` produces a <col min="X" max="X"/> element with no width,
+      // which Excel renders as a hidden column, causing A-Z to disappear when
+      // no columns had been manually resized (issue #15).
+      const colWidthEntries = tabData.colWidths || {};
+      if (Object.keys(colWidthEntries).length > 0) {
         const maxCol = tabData.cols || 26;
         gridSheet['!cols'] = Array.from({ length: maxCol }, (_, i) => {
           const key = colLabelFromIndex(i);
-          const w = tabData.colWidths[key];
-          return w ? { wpx: w } : {};
+          const w = colWidthEntries[key];
+          return w ? { wpx: w } : null;
         });
       }
-      if (tabData.rowHeights) {
+      const rowHeightEntries = tabData.rowHeights || {};
+      if (Object.keys(rowHeightEntries).length > 0) {
         const maxRow = tabData.rows || 50;
         gridSheet['!rows'] = Array.from({ length: maxRow }, (_, i) => {
-          const h = tabData.rowHeights[i];
-          return h ? { hpx: h, hpt: h } : {};
+          const h = rowHeightEntries[i];
+          return h ? { hpx: h, hpt: h } : null;
         });
       }
       XLSX.utils.book_append_sheet(wb, gridSheet, sheetName);
