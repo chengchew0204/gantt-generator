@@ -116,6 +116,14 @@ function bordersForPreset(id, r, c, r1, r2, c1, c2) {
   }
 }
 
+function rectsOverlap(a, b) {
+  return !(a.r2 < b.r1 || b.r2 < a.r1 || a.c2 < b.c1 || b.c2 < a.c1);
+}
+
+function rectEquals(a, b) {
+  return a.r1 === b.r1 && a.c1 === b.c1 && a.r2 === b.r2 && a.c2 === b.c2;
+}
+
 function parseFormulaRefs(text) {
   if (!text || !text.startsWith('=')) return {};
   const highlights = {};
@@ -141,6 +149,7 @@ export default function DataGrid({ data, onChange }) {
   const gridColWidths = data?.colWidths ?? {};
   const gridRowHeights = data?.rowHeights ?? {};
   const showGridLines = data?.showGridLines !== false;
+  const merges = useMemo(() => data?.merges ?? [], [data?.merges]);
 
   const [editingCell, setEditingCell] = useState(null);
   const [selectedCell, setSelectedCell] = useState(null);
@@ -162,18 +171,67 @@ export default function DataGrid({ data, onChange }) {
 
   const isFormulaEditing = editingCell != null && editText.startsWith('=');
 
+  const mergeLookup = useMemo(() => {
+    const anchorMap = new Map();
+    const coveredMap = new Map();
+    for (const m of merges) {
+      anchorMap.set(`${m.r1},${m.c1}`, m);
+      for (let r = m.r1; r <= m.r2; r++) {
+        for (let c = m.c1; c <= m.c2; c++) {
+          if (r === m.r1 && c === m.c1) continue;
+          coveredMap.set(`${r},${c}`, m);
+        }
+      }
+    }
+    return { anchorMap, coveredMap };
+  }, [merges]);
+
+  const getMergeAt = useCallback((r, c) => {
+    const k = `${r},${c}`;
+    return mergeLookup.anchorMap.get(k) || mergeLookup.coveredMap.get(k) || null;
+  }, [mergeLookup]);
+
+  const expandRectWithMerges = useCallback((rect) => {
+    if (!rect || merges.length === 0) return rect;
+    let out = { ...rect };
+    let changed = true;
+    let iter = 0;
+    while (changed && iter < 50) {
+      changed = false;
+      for (const m of merges) {
+        if (rectsOverlap(out, m)) {
+          if (m.r1 < out.r1) { out.r1 = m.r1; changed = true; }
+          if (m.r2 > out.r2) { out.r2 = m.r2; changed = true; }
+          if (m.c1 < out.c1) { out.c1 = m.c1; changed = true; }
+          if (m.c2 > out.c2) { out.c2 = m.c2; changed = true; }
+        }
+      }
+      iter++;
+    }
+    return out;
+  }, [merges]);
+
   const selRect = useMemo(() => {
     if (!selectedCell) return null;
     const end = selectionEnd || selectedCell;
-    return {
+    const base = {
       r1: Math.min(selectedCell.row, end.row),
       r2: Math.max(selectedCell.row, end.row),
       c1: Math.min(selectedCell.col, end.col),
       c2: Math.max(selectedCell.col, end.col),
     };
-  }, [selectedCell, selectionEnd]);
+    return expandRectWithMerges(base);
+  }, [selectedCell, selectionEnd, expandRectWithMerges]);
 
   const isMultiSel = selRect && (selRect.r1 !== selRect.r2 || selRect.c1 !== selRect.c2);
+
+  const mergedSelection = useMemo(() => {
+    if (!selRect) return null;
+    for (const m of merges) {
+      if (rectEquals(selRect, m)) return m;
+    }
+    return null;
+  }, [selRect, merges]);
 
   const refHighlights = useMemo(() => {
     if (!isFormulaEditing) return {};
@@ -353,7 +411,10 @@ export default function DataGrid({ data, onChange }) {
       commitEdit(editingCell.row, editingCell.col, editText);
     }
 
-    setSelectedCell({ row, col });
+    const hitMerge = getMergeAt(row, col);
+    const anchorRow = hitMerge ? hitMerge.r1 : row;
+    const anchorCol = hitMerge ? hitMerge.c1 : col;
+    setSelectedCell({ row: anchorRow, col: anchorCol });
     setSelectionEnd(null);
     isDraggingRef.current = true;
 
@@ -392,15 +453,18 @@ export default function DataGrid({ data, onChange }) {
 
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
-  }, [isFormulaEditing, editingCell, editText, insertReference, commitEdit, cols, rows, getColW]);
+  }, [isFormulaEditing, editingCell, editText, insertReference, commitEdit, cols, rows, getColW, getRowH, getMergeAt]);
 
   const handleCellClick = useCallback(() => {
     // Selection is handled entirely in handleCellMouseDown now.
   }, []);
 
   const handleCellDoubleClick = useCallback((row, col) => {
+    const hitMerge = getMergeAt(row, col);
+    const effRow = hitMerge ? hitMerge.r1 : row;
+    const effCol = hitMerge ? hitMerge.c1 : col;
     if (isFormulaEditing) {
-      const clickedKey = cellKey(row, col);
+      const clickedKey = cellKey(effRow, effCol);
       const editingKey = editingCell ? cellKey(editingCell.row, editingCell.col) : null;
       if (clickedKey !== editingKey) {
         insertReference(clickedKey);
@@ -408,10 +472,10 @@ export default function DataGrid({ data, onChange }) {
       }
     }
     setSelectionEnd(null);
-    const key = cellKey(row, col);
+    const key = cellKey(effRow, effCol);
     const cd = cells[key];
-    startEditing(row, col, cd?.f || String(cd?.v ?? ''), 'cell', 'edit');
-  }, [isFormulaEditing, editingCell, cells, startEditing, insertReference]);
+    startEditing(effRow, effCol, cd?.f || String(cd?.v ?? ''), 'cell', 'edit');
+  }, [isFormulaEditing, editingCell, cells, startEditing, insertReference, getMergeAt]);
 
   const handleCellBlur = useCallback((e) => {
     if (e.relatedTarget && containerRef.current?.contains(e.relatedTarget)) return;
@@ -524,6 +588,24 @@ export default function DataGrid({ data, onChange }) {
 
     if (editingCell) return;
 
+    const stepCell = (dr, dc) => {
+      const cur = getMergeAt(row, col);
+      const sr = cur ? cur.r1 : row;
+      const sc = cur ? cur.c1 : col;
+      const er = cur ? cur.r2 : row;
+      const ec = cur ? cur.c2 : col;
+      let nr = sr, nc = sc;
+      if (dr > 0) nr = er + 1;
+      else if (dr < 0) nr = sr - 1;
+      if (dc > 0) nc = ec + 1;
+      else if (dc < 0) nc = sc - 1;
+      nr = Math.max(0, Math.min(rows - 1, nr));
+      nc = Math.max(0, Math.min(cols - 1, nc));
+      const target = getMergeAt(nr, nc);
+      if (target) return { row: target.r1, col: target.c1 };
+      return { row: nr, col: nc };
+    };
+
     if (e.key === 'Enter' || e.key === 'F2') {
       e.preventDefault();
       setSelectionEnd(null);
@@ -534,15 +616,15 @@ export default function DataGrid({ data, onChange }) {
     }
     if (e.key === 'Tab') {
       e.preventDefault();
-      const nextCol = e.shiftKey ? Math.max(0, col - 1) : Math.min(cols - 1, col + 1);
-      setSelectedCell({ row, col: nextCol });
+      const next = stepCell(0, e.shiftKey ? -1 : 1);
+      setSelectedCell(next);
       setSelectionEnd(null);
       return;
     }
-    if (e.key === 'ArrowUp') { e.preventDefault(); setSelectedCell({ row: Math.max(0, row - 1), col }); setSelectionEnd(null); return; }
-    if (e.key === 'ArrowDown') { e.preventDefault(); setSelectedCell({ row: Math.min(rows - 1, row + 1), col }); setSelectionEnd(null); return; }
-    if (e.key === 'ArrowLeft') { e.preventDefault(); setSelectedCell({ row, col: Math.max(0, col - 1) }); setSelectionEnd(null); return; }
-    if (e.key === 'ArrowRight') { e.preventDefault(); setSelectedCell({ row, col: Math.min(cols - 1, col + 1) }); setSelectionEnd(null); return; }
+    if (e.key === 'ArrowUp')    { e.preventDefault(); setSelectedCell(stepCell(-1, 0)); setSelectionEnd(null); return; }
+    if (e.key === 'ArrowDown')  { e.preventDefault(); setSelectedCell(stepCell(1, 0));  setSelectionEnd(null); return; }
+    if (e.key === 'ArrowLeft')  { e.preventDefault(); setSelectedCell(stepCell(0, -1)); setSelectionEnd(null); return; }
+    if (e.key === 'ArrowRight') { e.preventDefault(); setSelectedCell(stepCell(0, 1));  setSelectionEnd(null); return; }
     if (e.key === 'Delete' || e.key === 'Backspace') {
       e.preventDefault();
       if (selRect && onChange) {
@@ -577,6 +659,7 @@ export default function DataGrid({ data, onChange }) {
     selRect,
     onChange,
     data,
+    getMergeAt,
   ]);
 
   const handleStartBarEdit = useCallback(() => {
@@ -702,9 +785,125 @@ export default function DataGrid({ data, onChange }) {
     onChange({ ...data, showGridLines: !showGridLines });
   }, [onChange, data, showGridLines]);
 
+  const [pendingMerge, setPendingMerge] = useState(null);
+
+  const applyMerge = useCallback((kind, rect) => {
+    if (!onChange || !rect) return;
+    let toAdd = [];
+    if (kind === 'across') {
+      for (let r = rect.r1; r <= rect.r2; r++) {
+        if (rect.c2 > rect.c1) {
+          toAdd.push({ r1: r, c1: rect.c1, r2: r, c2: rect.c2 });
+        }
+      }
+    } else {
+      if (rect.r2 > rect.r1 || rect.c2 > rect.c1) {
+        toAdd.push({ r1: rect.r1, c1: rect.c1, r2: rect.r2, c2: rect.c2 });
+      }
+    }
+    if (toAdd.length === 0) return;
+
+    const preserved = merges.filter((m) => !toAdd.some((am) => rectsOverlap(m, am)));
+
+    const updatedCells = { ...cells };
+    for (const m of toAdd) {
+      for (let r = m.r1; r <= m.r2; r++) {
+        for (let c = m.c1; c <= m.c2; c++) {
+          if (r === m.r1 && c === m.c1) continue;
+          const k = cellKey(r, c);
+          const existing = updatedCells[k];
+          if (!existing) continue;
+          const rest = { ...existing };
+          delete rest.v;
+          delete rest.f;
+          if (Object.keys(rest).length === 0) {
+            delete updatedCells[k];
+          } else {
+            updatedCells[k] = rest;
+          }
+        }
+      }
+    }
+
+    if (kind === 'center') {
+      for (const m of toAdd) {
+        const anchorKey = cellKey(m.r1, m.c1);
+        const existing = updatedCells[anchorKey] || {};
+        updatedCells[anchorKey] = {
+          ...existing,
+          s: { ...(existing.s || {}), hAlign: 'center', vAlign: 'middle' },
+        };
+      }
+    }
+
+    onChange({ ...data, cells: updatedCells, merges: [...preserved, ...toAdd] });
+  }, [merges, cells, data, onChange]);
+
+  const countExtraNonEmpty = useCallback((kind, rect) => {
+    if (!rect) return 0;
+    let n = 0;
+    const isAnchor = (r, c) => {
+      if (kind === 'across') return c === rect.c1;
+      return r === rect.r1 && c === rect.c1;
+    };
+    for (let r = rect.r1; r <= rect.r2; r++) {
+      for (let c = rect.c1; c <= rect.c2; c++) {
+        if (isAnchor(r, c)) continue;
+        const cd = cells[cellKey(r, c)];
+        if (cd && ((cd.v !== '' && cd.v != null) || cd.f)) n++;
+      }
+    }
+    return n;
+  }, [cells]);
+
+  const handleMerge = useCallback((kind) => {
+    if (!selRect) return;
+    if (kind !== 'across' && selRect.r1 === selRect.r2 && selRect.c1 === selRect.c2) return;
+    if (kind === 'across' && selRect.c1 === selRect.c2) return;
+
+    const extras = countExtraNonEmpty(kind, selRect);
+    if (extras > 0) {
+      setPendingMerge({ kind, rect: selRect });
+      return;
+    }
+    applyMerge(kind, selRect);
+  }, [selRect, countExtraNonEmpty, applyMerge]);
+
+  const handleUnmerge = useCallback(() => {
+    if (!selRect || !onChange) return;
+    const remaining = merges.filter((m) => !rectsOverlap(m, selRect));
+    if (remaining.length === merges.length) return;
+    onChange({ ...data, merges: remaining });
+  }, [selRect, merges, data, onChange]);
+
+  const confirmPendingMerge = useCallback(() => {
+    if (!pendingMerge) return;
+    const { kind, rect } = pendingMerge;
+    setPendingMerge(null);
+    applyMerge(kind, rect);
+  }, [pendingMerge, applyMerge]);
+
+  const cancelPendingMerge = useCallback(() => {
+    setPendingMerge(null);
+  }, []);
+
   const totalWidth = useMemo(() => {
     return ROW_HEADER_WIDTH + Array.from({ length: cols }, (_, i) => getColW(i)).reduce((a, b) => a + b, 0);
   }, [cols, getColW]);
+
+  const colOffsets = useMemo(() => {
+    const arr = new Array(cols + 1);
+    arr[0] = 0;
+    for (let i = 0; i < cols; i++) arr[i + 1] = arr[i] + getColW(i);
+    return arr;
+  }, [cols, getColW]);
+
+  const rowOffsets = useMemo(() => {
+    const arr = new Array(rows + 1);
+    arr[0] = 0;
+    for (let i = 0; i < rows; i++) arr[i + 1] = arr[i] + getRowH(i);
+    return arr;
+  }, [rows, getRowH]);
 
   const selectedKey = selectedCell ? cellKey(selectedCell.row, selectedCell.col) : null;
   const selectedCellData = selectedKey ? cells[selectedKey] : null;
@@ -737,11 +936,14 @@ export default function DataGrid({ data, onChange }) {
         onApplyBorderPreset={handleApplyBorderPreset}
         onToggleGridLines={handleToggleGridLines}
         showGridLines={showGridLines}
+        onMerge={handleMerge}
+        onUnmerge={handleUnmerge}
+        isMergedSelection={!!mergedSelection}
       />
 
       {/* Grid */}
       <div ref={scrollRef} className="flex-1 overflow-auto">
-        <div style={{ minWidth: totalWidth }}>
+        <div style={{ minWidth: totalWidth, position: 'relative' }}>
           {/* Column headers */}
           <div className="flex sticky top-0 z-10" style={{ backgroundColor: 'var(--color-bg-secondary)' }}>
             <div
@@ -805,6 +1007,18 @@ export default function DataGrid({ data, onChange }) {
                   />
                 </div>
                 {Array.from({ length: cols }, (_, ci) => {
+                  const mergeKey = `${ri},${ci}`;
+                  const isMergeAnchor = mergeLookup.anchorMap.has(mergeKey);
+                  const isMergeCovered = mergeLookup.coveredMap.has(mergeKey);
+                  if (isMergeAnchor || isMergeCovered) {
+                    return (
+                      <div
+                        key={ci}
+                        className="flex-shrink-0"
+                        style={{ width: getColW(ci), height: rh }}
+                      />
+                    );
+                  }
                   const key = cellKey(ri, ci);
                   const cellData = cells[key];
                   const dv = displayValues[key] ?? cellData?.v ?? '';
@@ -913,6 +1127,194 @@ export default function DataGrid({ data, onChange }) {
               </div>
             );
           })}
+
+          {/* Merge overlay layer: one absolute-positioned div per merge range */}
+          {merges.map((m) => {
+            const left = ROW_HEADER_WIDTH + (colOffsets[m.c1] || 0);
+            const top = HEADER_HEIGHT + (rowOffsets[m.r1] || 0);
+            const width = (colOffsets[m.c2 + 1] || 0) - (colOffsets[m.c1] || 0);
+            const height = (rowOffsets[m.r2 + 1] || 0) - (rowOffsets[m.r1] || 0);
+
+            const key = cellKey(m.r1, m.c1);
+            const cellData = cells[key];
+            const dv = displayValues[key] ?? cellData?.v ?? '';
+            const displayStr = dv != null ? String(dv) : '';
+            const cellCss = cellStyleToCss(cellData?.s);
+            const aB = cellData?.s?.borders;
+            const cornerTR = cells[cellKey(m.r1, m.c2)];
+            const cornerBL = cells[cellKey(m.r2, m.c1)];
+            const cornerBR = cells[cellKey(m.r2, m.c2)];
+
+            const effTop = borderSideToCss(aB?.top) || borderStyle;
+            const effLeft = borderSideToCss(aB?.left) || borderStyle;
+            const effRight =
+              borderSideToCss(aB?.right) ||
+              borderSideToCss(cornerTR?.s?.borders?.right) ||
+              borderSideToCss(cornerBR?.s?.borders?.right) ||
+              borderStyle;
+            const effBottom =
+              borderSideToCss(aB?.bottom) ||
+              borderSideToCss(cornerBL?.s?.borders?.bottom) ||
+              borderSideToCss(cornerBR?.s?.borders?.bottom) ||
+              borderStyle;
+
+            const isAnchor = selectedCell && selectedCell.row === m.r1 && selectedCell.col === m.c1;
+            const isEditing = editingCell && editingCell.row === m.r1 && editingCell.col === m.c1;
+            const inRange = selRect && rectsOverlap(selRect, m);
+            const isExactMergeSel = selRect && rectEquals(selRect, m);
+            const highlightColor = refHighlights[key];
+
+            let outlineStyle = 'none';
+            let outlineColor;
+            if (isEditing) {
+              outlineStyle = '2px solid var(--color-accent)';
+            } else if (highlightColor) {
+              outlineStyle = `2px solid ${highlightColor}`;
+              outlineColor = highlightColor;
+            } else if (isExactMergeSel || (isAnchor && !isMultiSel)) {
+              outlineStyle = '2px solid var(--color-accent)';
+            }
+
+            return (
+              <div
+                key={`merge-${m.r1}-${m.c1}-${m.r2}-${m.c2}`}
+                className="absolute"
+                style={{
+                  left,
+                  top,
+                  width,
+                  height,
+                  zIndex: 1,
+                  borderTop: effTop,
+                  borderLeft: effLeft,
+                  borderRight: effRight,
+                  borderBottom: effBottom,
+                  backgroundColor: 'var(--color-bg-primary)',
+                }}
+                onMouseDown={(e) => handleCellMouseDown(e, m.r1, m.c1)}
+                onDoubleClick={() => handleCellDoubleClick(m.r1, m.c1)}
+              >
+                {isEditing ? (
+                  <input
+                    ref={cellInputRef}
+                    type="text"
+                    value={editText}
+                    onChange={(e) => setEditText(e.target.value)}
+                    onBlur={handleCellBlur}
+                    onKeyDown={handleEditKeyDown}
+                    onFocus={() => { editSourceRef.current = 'cell'; }}
+                    className="w-full h-full px-1 text-[12px] outline-none"
+                    style={{
+                      backgroundColor: 'var(--color-bg-primary)',
+                      color: 'var(--color-text-primary)',
+                      border: '2px solid var(--color-accent)',
+                    }}
+                  />
+                ) : (
+                  <div
+                    className="w-full h-full px-1 flex items-center text-[12px] truncate select-none relative"
+                    style={{
+                      color: 'var(--color-text-primary)',
+                      outline: outlineStyle,
+                      outlineOffset: -2,
+                      ...cellCss,
+                    }}
+                  >
+                    {highlightColor && (
+                      <div
+                        className="absolute inset-0 pointer-events-none"
+                        style={{ backgroundColor: outlineColor, opacity: 0.06 }}
+                      />
+                    )}
+                    {inRange && isMultiSel && !isExactMergeSel && (
+                      <div
+                        className="absolute inset-0 pointer-events-none z-[1]"
+                        style={{ backgroundColor: 'var(--color-accent)', opacity: 0.10 }}
+                      />
+                    )}
+                    {inRange && isMultiSel && !isExactMergeSel && (
+                      <div
+                        className="absolute inset-0 pointer-events-none z-[3]"
+                        style={{
+                          borderTop: m.r1 === selRect.r1 ? '2px solid var(--color-accent)' : 'none',
+                          borderBottom: m.r2 === selRect.r2 ? '2px solid var(--color-accent)' : 'none',
+                          borderLeft: m.c1 === selRect.c1 ? '2px solid var(--color-accent)' : 'none',
+                          borderRight: m.c2 === selRect.c2 ? '2px solid var(--color-accent)' : 'none',
+                        }}
+                      />
+                    )}
+                    {displayStr}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {pendingMerge && (
+        <MergeConfirmDialog
+          onConfirm={confirmPendingMerge}
+          onCancel={cancelPendingMerge}
+        />
+      )}
+    </div>
+  );
+}
+
+function MergeConfirmDialog({ onConfirm, onCancel }) {
+  return (
+    <div
+      className="absolute inset-0 z-[9999] flex items-center justify-center"
+      style={{ backgroundColor: 'rgba(0, 0, 0, 0.35)', backdropFilter: 'blur(2px)' }}
+      onMouseDown={(e) => { e.stopPropagation(); onCancel(); }}
+    >
+      <div
+        className="rounded-lg shadow-xl max-w-sm"
+        style={{
+          backgroundColor: 'var(--color-bg-secondary)',
+          border: '1px solid var(--color-border)',
+          width: 360,
+        }}
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <div className="px-4 py-3" style={{ borderBottom: '1px solid var(--color-border-subtle)' }}>
+          <div className="text-[13px] font-semibold" style={{ color: 'var(--color-text-primary)' }}>
+            Merge cells
+          </div>
+        </div>
+        <div className="px-4 py-3 text-[12px] leading-relaxed" style={{ color: 'var(--color-text-secondary)' }}>
+          Merging cells only keeps the upper-left cell value, and discards other values. Continue?
+        </div>
+        <div className="flex justify-end gap-2 px-4 py-3" style={{ borderTop: '1px solid var(--color-border-subtle)' }}>
+          <button
+            onClick={onCancel}
+            onMouseDown={(e) => e.preventDefault()}
+            className="px-3 py-1 rounded text-[12px] font-medium cursor-pointer transition-colors"
+            style={{
+              backgroundColor: 'transparent',
+              color: 'var(--color-text-secondary)',
+              border: '1px solid var(--color-border)',
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; }}
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            onMouseDown={(e) => e.preventDefault()}
+            className="px-3 py-1 rounded text-[12px] font-medium cursor-pointer transition-colors"
+            style={{
+              backgroundColor: 'var(--color-accent)',
+              color: 'var(--color-on-accent)',
+              border: '1px solid var(--color-accent)',
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--color-accent-hover)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'var(--color-accent)'; }}
+          >
+            OK
+          </button>
         </div>
       </div>
     </div>

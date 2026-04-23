@@ -555,6 +555,7 @@ function gridDataToSheet(tabData) {
   const colCount = tabData.cols || 26;
   const tabColWidths = tabData.colWidths || {};
   const tabRowHeights = tabData.rowHeights || {};
+  const tabMerges = Array.isArray(tabData.merges) ? tabData.merges : [];
 
   let maxRow = 0;
   let maxCol = 0;
@@ -576,6 +577,13 @@ function gridDataToSheet(tabData) {
   for (const key of Object.keys(tabRowHeights)) {
     const idx = parseInt(key, 10);
     if (Number.isFinite(idx) && idx > maxRow) maxRow = idx;
+  }
+
+  // Merges extending past the last populated cell must also be inside
+  // !ref or SheetJS will drop them at write time.
+  for (const m of tabMerges) {
+    if (Number.isFinite(m?.r2) && m.r2 > maxRow) maxRow = m.r2;
+    if (Number.isFinite(m?.c2) && m.c2 > maxCol) maxCol = m.c2;
   }
 
   const rows = Math.min(Math.max(maxRow + 1, 1), rowCount);
@@ -615,6 +623,16 @@ function gridDataToSheet(tabData) {
         ws[wsKey] = { t: 'n', v: cell.v ?? 0, f: cell.f.startsWith('=') ? cell.f.slice(1) : cell.f };
       }
     }
+  }
+
+  // Merged ranges are a first-class concept in OOXML (<mergeCells>) and
+  // SheetJS Community reads / writes them natively via ws['!merges'].
+  // Skip degenerate single-cell entries; Excel rejects those.
+  if (tabMerges.length > 0) {
+    const normalized = tabMerges
+      .filter((m) => m && (m.r2 > m.r1 || m.c2 > m.c1))
+      .map((m) => ({ s: { r: m.r1, c: m.c1 }, e: { r: m.r2, c: m.c2 } }));
+    if (normalized.length > 0) ws['!merges'] = normalized;
   }
 
   return ws;
@@ -718,12 +736,30 @@ function parseGridSheets(wb, tabs, gridCellStyles = {}, nativeSheetStyles = {}, 
       });
     }
 
+    const importedMerges = [];
+    if (Array.isArray(sheet['!merges'])) {
+      for (const m of sheet['!merges']) {
+        const r1 = m?.s?.r, c1 = m?.s?.c, r2 = m?.e?.r, c2 = m?.e?.c;
+        if (!Number.isFinite(r1) || !Number.isFinite(c1) || !Number.isFinite(r2) || !Number.isFinite(c2)) continue;
+        if (r1 === r2 && c1 === c2) continue;
+        importedMerges.push({
+          r1: Math.min(r1, r2),
+          c1: Math.min(c1, c2),
+          r2: Math.max(r1, r2),
+          c2: Math.max(c1, c2),
+        });
+        if (Math.max(r1, r2) > maxRow) maxRow = Math.max(r1, r2);
+        if (Math.max(c1, c2) > maxCol) maxCol = Math.max(c1, c2);
+      }
+    }
+
     gridData[tab.id] = {
       rows: Math.max(maxRow + 10, 50),
       cols: Math.max(maxCol + 5, 26),
       cells,
       colWidths: importedColWidths,
       rowHeights: importedRowHeights,
+      merges: importedMerges,
       showGridLines: true,
     };
   }
