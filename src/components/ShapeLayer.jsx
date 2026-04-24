@@ -378,7 +378,11 @@ function ShapeNode({ shape, isSelected, isEditingText, onMouseDown, onDoubleClic
   const strokeValue = hasVisibleOutline ? outline.color : 'none';
   const strokeWidth = hasVisibleOutline ? (outline.width != null ? outline.width : 1) : 0;
   const strokeOpacity = outline.alpha != null ? outline.alpha : 1;
-  const strokeDash = dashToSvg(outline.dash);
+  const strokeDash = dashToSvg(outline.dash, strokeWidth);
+  // Round caps add strokeWidth/2 past each dash endpoint, which at heavy
+  // weights consumes the gap entirely and collapses dashes into a solid
+  // line. Butt caps keep the pattern crisp when a dash is present.
+  const strokeLinecap = strokeDash ? 'butt' : 'round';
 
   const transform = `translate(${shape.x} ${shape.y}) rotate(${rot} ${w / 2} ${h / 2})`;
 
@@ -430,7 +434,7 @@ function ShapeNode({ shape, isSelected, isEditingText, onMouseDown, onDoubleClic
         strokeWidth={strokeWidth}
         strokeDasharray={strokeDash}
         strokeLinejoin="round"
-        strokeLinecap="round"
+        strokeLinecap={strokeLinecap}
         fillRule={preset.compound ? 'evenodd' : 'nonzero'}
         filter={filterId ? `url(#${filterId})` : undefined}
         style={{ cursor: isEditingText ? 'text' : 'move', pointerEvents: hitPointerEvents }}
@@ -636,12 +640,19 @@ function SelectionDecorations({ shape, onResizeStart, onRotateStart }) {
   );
 }
 
-function dashToSvg(dash) {
+// OOXML prstDash defines every dash pattern as multiples of the stroke
+// width (dash = 4w:3w, dot = 1w:3w, dashDot = 4w:3w:1w:3w, lgDash = 8w:3w).
+// Scaling the SVG dasharray by strokeWidth preserves the pattern at every
+// line weight, matching how Excel and every DrawingML renderer paints it.
+// A floor of 1 keeps the 0.5 pt weight producing a visible gap.
+function dashToSvg(dash, strokeWidth) {
+  const w = Math.max(1, strokeWidth || 1);
+  const scale = (parts) => parts.map((n) => n * w).join(' ');
   switch (dash) {
-    case 'dash': return '6 3';
-    case 'dot': return '2 2';
-    case 'dashDot': return '6 2 2 2';
-    case 'longDash': return '10 3';
+    case 'dash': return scale([4, 3]);
+    case 'dot': return scale([1, 3]);
+    case 'dashDot': return scale([4, 3, 1, 3]);
+    case 'longDash': return scale([8, 3]);
     default: return undefined;
   }
 }
