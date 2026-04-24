@@ -1623,10 +1623,31 @@ export default function DataGrid({ data, onChange }) {
                   const aboveBottom = ri > 0 ? cells[cellKey(ri - 1, ci)]?.s?.borders?.bottom : null;
                   const leftRight = ci > 0 ? cells[cellKey(ri, ci - 1)]?.s?.borders?.right : null;
 
-                  const effBottom = borderSideToCss(cellBorders?.bottom) || borderStyle;
-                  const effRight = borderSideToCss(cellBorders?.right) || borderStyle;
-                  const effTop = cellBorders?.top && !aboveBottom ? borderSideToCss(cellBorders.top) : undefined;
-                  const effLeft = cellBorders?.left && !leftRight ? borderSideToCss(cellBorders.left) : undefined;
+                  // Border dedup across the shared seam between adjacent cells.
+                  // Each cell owns a 1px borderBottom / borderRight by default,
+                  // so without dedup an explicit top on this cell and the
+                  // default bottom on the cell above paint two abutting 1px
+                  // lines and visually stack into a 2px line (issue reported
+                  // by the user after Excel->GanttGen paste).
+                  // Resolution: whichever side carries an explicit border wins,
+                  // and the other side is suppressed. If both sides have
+                  // explicit borders only the cell-above / cell-left paints.
+                  const hasExplicitTop = !!cellBorders?.top;
+                  const hasExplicitLeft = !!cellBorders?.left;
+                  const suppressBottom = !cellBorders?.bottom
+                    && ri + 1 < rows
+                    && !!cells[cellKey(ri + 1, ci)]?.s?.borders?.top;
+                  const suppressRight = !cellBorders?.right
+                    && ci + 1 < cols
+                    && !!cells[cellKey(ri, ci + 1)]?.s?.borders?.left;
+                  const effBottom = suppressBottom
+                    ? 'none'
+                    : borderSideToCss(cellBorders?.bottom) || borderStyle;
+                  const effRight = suppressRight
+                    ? 'none'
+                    : borderSideToCss(cellBorders?.right) || borderStyle;
+                  const effTop = hasExplicitTop && !aboveBottom ? borderSideToCss(cellBorders.top) : undefined;
+                  const effLeft = hasExplicitLeft && !leftRight ? borderSideToCss(cellBorders.left) : undefined;
 
                   let outlineStyle = 'none';
                   let outlineColor;
@@ -1762,18 +1783,49 @@ export default function DataGrid({ data, onChange }) {
                 }
               }
             }
+            // Same seam-dedup as single cells: suppress the merge overlay's
+            // bottom/right default grid line when the merge has no explicit
+            // bottom/right but the cell immediately after the overlay starts
+            // with an explicit top/left. Otherwise the two adjacent 1px lines
+            // stack into a visible 2px line at the merge edge.
+            const anyExplicitBottom = !!aB?.bottom
+              || !!cornerBL?.s?.borders?.bottom
+              || !!cornerBR?.s?.borders?.bottom;
+            let belowExplicitTop = false;
+            if (!anyExplicitBottom && m.r2 + 1 < rows) {
+              for (let c = m.c1; c <= m.c2; c++) {
+                if (cells[cellKey(m.r2 + 1, c)]?.s?.borders?.top) {
+                  belowExplicitTop = true;
+                  break;
+                }
+              }
+            }
+            const anyExplicitRight = !!aB?.right
+              || !!cornerTR?.s?.borders?.right
+              || !!cornerBR?.s?.borders?.right;
+            let rightExplicitLeft = false;
+            if (!anyExplicitRight && m.c2 + 1 < cols) {
+              for (let r = m.r1; r <= m.r2; r++) {
+                if (cells[cellKey(r, m.c2 + 1)]?.s?.borders?.left) {
+                  rightExplicitLeft = true;
+                  break;
+                }
+              }
+            }
             const effTop = aB?.top && !aboveExplicitBottom ? borderSideToCss(aB.top) : undefined;
             const effLeft = aB?.left && !leftExplicitRight ? borderSideToCss(aB.left) : undefined;
-            const effRight =
-              borderSideToCss(aB?.right) ||
-              borderSideToCss(cornerTR?.s?.borders?.right) ||
-              borderSideToCss(cornerBR?.s?.borders?.right) ||
-              borderStyle;
-            const effBottom =
-              borderSideToCss(aB?.bottom) ||
-              borderSideToCss(cornerBL?.s?.borders?.bottom) ||
-              borderSideToCss(cornerBR?.s?.borders?.bottom) ||
-              borderStyle;
+            const effRight = rightExplicitLeft
+              ? 'none'
+              : borderSideToCss(aB?.right) ||
+                borderSideToCss(cornerTR?.s?.borders?.right) ||
+                borderSideToCss(cornerBR?.s?.borders?.right) ||
+                borderStyle;
+            const effBottom = belowExplicitTop
+              ? 'none'
+              : borderSideToCss(aB?.bottom) ||
+                borderSideToCss(cornerBL?.s?.borders?.bottom) ||
+                borderSideToCss(cornerBR?.s?.borders?.bottom) ||
+                borderStyle;
 
             const isAnchor = selectedCell && selectedCell.row === m.r1 && selectedCell.col === m.c1;
             const isEditing = editingCell && editingCell.row === m.r1 && editingCell.col === m.c1;

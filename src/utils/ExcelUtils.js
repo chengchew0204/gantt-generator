@@ -8,7 +8,12 @@ import { extractShapes } from './XlsxShapeExtractor';
 // changes. Files tagged with version >= 1 treat the native xlsx bytes as
 // authoritative for the keys listed in NATIVE_STYLE_KEYS; older files
 // fall back to the gridCellStyles JSON blob. See ADR 003.
-const NATIVE_CELL_STYLES_VERSION = '2';
+//
+// Version history:
+//   1 - alignment (hAlign / vAlign)
+//   2 - + font toggles (bold / italic / underline) and number formats
+//   3 - + font color, cell background, and borders (this version)
+const NATIVE_CELL_STYLES_VERSION = '3';
 const NATIVE_STYLE_KEYS = [
   'hAlign',
   'vAlign',
@@ -20,6 +25,9 @@ const NATIVE_STYLE_KEYS = [
   'currency',
   'useThousands',
   'negativeStyle',
+  'color',
+  'bg',
+  'borders',
 ];
 
 // Mirror of NATIVE_CELL_STYLES_VERSION for the DrawingML shape codec.
@@ -417,6 +425,20 @@ function collectSheetStyles(settings, gridData) {
       if (typeof s.useThousands === 'boolean') picked.useThousands = s.useThousands;
       if (typeof s.negativeStyle === 'string' && s.negativeStyle) {
         picked.negativeStyle = s.negativeStyle;
+      }
+      if (typeof s.color === 'string' && s.color) picked.color = s.color;
+      if (typeof s.bg === 'string' && s.bg) picked.bg = s.bg;
+      if (s.borders && typeof s.borders === 'object') {
+        const pickedBorders = {};
+        for (const side of ['top', 'right', 'bottom', 'left']) {
+          const b = s.borders[side];
+          if (b && b.style && b.style !== 'none') {
+            const out = { style: b.style };
+            if (b.color) out.color = b.color;
+            pickedBorders[side] = out;
+          }
+        }
+        if (Object.keys(pickedBorders).length > 0) picked.borders = pickedBorders;
       }
       if (Object.keys(picked).length === 0) continue;
       cellStyles[cellRef] = picked;
