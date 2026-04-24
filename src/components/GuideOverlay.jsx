@@ -1,18 +1,18 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useLayoutEffect, useCallback, useRef } from 'react';
 import {
   X,
   ChevronLeft,
   ChevronRight,
   Rocket,
   FileSpreadsheet,
-  Table2,
+  FolderTree,
   BarChart3,
   GitBranch,
   Diamond,
-  FolderTree,
+  LayoutGrid,
   Palette,
   SlidersHorizontal,
-  Image,
+  Share2,
 } from 'lucide-react';
 
 const TOUR_STEPS = [
@@ -21,39 +21,38 @@ const TOUR_STEPS = [
     icon: Rocket,
     title: 'Welcome to GanttGen',
     description:
-      'GanttGen is a zero-installation, single-file project management tool that runs entirely in your browser. No backend, no login, no setup required.',
+      'A zero-installation, single-file project tool that runs entirely in your browser. No backend, no login, no setup -- and your data never leaves your machine.',
     details: [
-      'Works offline and on the file:// protocol -- just open index.html',
-      'All project data lives in Excel files (.xlsx) that you import and export',
-      'No data leaves your machine; everything runs client-side',
+      'Works offline; opens directly from index.html on file://',
+      'Excel (.xlsx) is the only persistence layer -- import, edit, save, repeat',
+      'Use Arrow keys, Enter to advance, or Esc to exit this tour',
     ],
     placement: 'center',
   },
   {
     target: '[data-guide="toolbar-import"]',
     icon: FileSpreadsheet,
-    title: 'Excel Import / Export',
+    title: 'Top Toolbar',
     description:
-      'These buttons handle all data persistence. Download a template, fill it in, import it, and save your work back to Excel.',
+      'Everything you need to load, save, and share lives along the top. Click the project name to rename it; the small arrows beside it are Undo / Redo (Ctrl+Z, Ctrl+Shift+Z).',
     details: [
-      '"Import Excel" reads your .xlsx and populates the table and chart',
-      '"Download Template" gives you a pre-formatted .xlsx with correct column headers',
-      '"Save to Excel" exports tasks plus theme, view options, and column settings',
-      'Round-trip safe: import, edit, save, re-import -- everything is restored',
+      'Import Excel / Download Template -- start from your data or a blank file',
+      'Save to Excel -- exports tasks, theme, view options, columns, and grid sheets',
+      'Export PNG -- chart-only or full layout. Share -- a single-file HTML download',
+      'Below 1280 px the labels collapse to icons; hover to see the name',
     ],
     placement: 'bottom',
   },
   {
     target: '[data-guide="data-table"]',
-    icon: Table2,
-    title: 'Data Table',
+    icon: FolderTree,
+    title: 'Data Table & WBS',
     description:
-      'The left pane is an editable task grid. Click any cell to edit inline. Add or delete rows with the controls at the bottom.',
+      'The left pane is an editable task grid. Click any cell to edit. Use the Parent ID column to nest tasks -- multi-level hierarchies render automatic indent guides.',
     details: [
-      'Click a cell to edit text, numbers, dates, or status',
-      'Toggle visible columns via the View dropdown or column picker in the header',
-      'Resize columns by dragging header borders',
-      'Editing Start Date + Duration auto-calculates End Date (and vice versa)',
+      'Editing Start Date + Duration auto-fills End Date (Skip Weekends honored)',
+      'Progress (%) updates the bar live as you type',
+      'Collapse a parent to hide every descendant; deleting a parent cascades',
     ],
     placement: 'over',
   },
@@ -62,13 +61,11 @@ const TOUR_STEPS = [
     icon: BarChart3,
     title: 'Gantt Chart',
     description:
-      'The right pane renders an interactive SVG Gantt chart synchronized with the data table.',
+      'The right pane is an interactive SVG chart synced to the data table. Drag, resize, and zoom to shape your schedule.',
     details: [
-      'Drag a bar horizontally to move its start/end dates',
-      'Drag the right edge of a bar to resize (change duration)',
-      'Day / Week scale toggle and +/- zoom buttons in the chart header',
-      'Click a bar to select the corresponding row in the data table',
-      'A vertical "Today" line marks the current date',
+      'Drag a bar to move it; drag its right edge to resize the duration',
+      'Click a bar to select the matching row',
+      'Day / Week scale and 5%-300% zoom live in the bottom status bar',
     ],
     placement: 'over',
   },
@@ -77,12 +74,11 @@ const TOUR_STEPS = [
     icon: GitBranch,
     title: 'Dependencies & Critical Path',
     description:
-      'Define task dependencies using predecessor IDs. GanttGen automatically computes the Critical Path (CPM) and draws arrows on the chart.',
+      'Type predecessor IDs into the Dependency column (e.g. "2,3"). GanttGen runs CPM live and can highlight the critical path and slack.',
     details: [
-      'Enter predecessor task IDs in the Dependency column (comma-separated, e.g. "2,3")',
-      'Dependency arrows are drawn on the chart between linked tasks',
-      'Critical path tasks (zero total float) are highlighted in red',
-      'Slack/float bars show how much a non-critical task can slip',
+      'Critical (zero-slack) tasks render in red; slack bars show how far a task can slip',
+      'Critical Path and Slack are off by default -- enable them in View options',
+      'Dependency arrows and the Today line are toggled there too',
     ],
     placement: 'over',
   },
@@ -91,40 +87,38 @@ const TOUR_STEPS = [
     icon: Diamond,
     title: 'Milestones & Baselines',
     description:
-      'Milestones are zero-duration tasks shown as diamonds on the chart. Baseline dates let you track schedule variance visually.',
+      'Use zero-duration tasks for milestones. Fill the Baseline columns to track schedule variance against your original plan.',
     details: [
-      'Set Duration to 0 to create a milestone (renders as a diamond)',
-      'Fill in Baseline Start / End columns to record the original schedule',
-      'Baseline bars appear as a thin strip behind the actual bar',
-      'Toggle baseline visibility in View Options',
+      'Duration = 0 renders as a diamond on the chart',
+      'Baseline Start / End create a thin strip behind the actual bar',
+      'Toggle baselines on or off in View options',
     ],
     placement: 'over',
   },
   {
-    target: '[data-guide="data-table"]',
-    icon: FolderTree,
-    title: 'WBS (Work Breakdown Structure)',
+    target: '[data-guide="status-bar"]',
+    icon: LayoutGrid,
+    title: 'Spreadsheet Tabs',
     description:
-      'Organize tasks hierarchically using the Parent ID column. Parent tasks become summary bars that aggregate child dates and progress.',
+      'The bottom tab strip lets you add full Excel-like data sheets next to your Gantt -- handy for budgets, references, or supporting calculations. Click + to add a tab.',
     details: [
-      "Set a task's Parent ID to another task's ID to make it a child",
-      'Parent rows auto-compute start/end dates and average progress',
-      'Click the expand/collapse arrow on a parent to hide or show children',
-      'Summary bars on the chart span the full duration of child tasks',
+      '400+ formula functions, plus bold / italic / underline, colors, borders, and alignment',
+      'Excel-parity number formats (Currency, Accounting, Percentage...) with Ctrl+Shift+1..6',
+      'Merge cells, draw shapes (rectangles, arrows, lines, text boxes), copy/paste with Excel',
+      'Each tab saves as its own sheet inside your .xlsx',
     ],
-    placement: 'over',
+    placement: 'top',
   },
   {
     target: '[data-guide="btn-theme"]',
     icon: Palette,
     title: 'Theming',
     description:
-      'Customize the look and feel with built-in presets or your own colors. Category-specific bar colors are also configurable.',
+      'Switch presets or build your own. Per-category bar colors keep similar tasks visually grouped.',
     details: [
-      'Presets include Linear Dark, Notion Light, Classic Tremor, Gray, and Black & White',
+      'Presets: Linear Dark, Notion Light, Classic Tremor, Gray, Black & White',
       'Custom color builder for background, text, accent, and more',
-      'Category colors: assign distinct bar colors per task category',
-      'Theme settings are saved into your Excel file on export',
+      'Theme + category colors are saved into your Excel file on export',
     ],
     placement: 'bottom',
   },
@@ -133,25 +127,25 @@ const TOUR_STEPS = [
     icon: SlidersHorizontal,
     title: 'View Options',
     description:
-      'Fine-tune what the chart displays. All preferences are persisted when you save to Excel.',
+      'Fine-tune what the chart shows and which columns appear in the data table. Every preference round-trips through Excel.',
     details: [
-      'Toggle: Critical Path, Slack, Dependency Arrows, Today Line, Baseline Bars',
-      'Toggle: Day/Week/Month labels on the timeline header',
-      'Skip Weekends: auto-calculates durations using working days only',
-      'Column visibility: show or hide data table columns',
+      'Chart toggles: Critical Path, Slack, Dependency Arrows, Today Line, Baseline',
+      'Header labels: Day / Week / Month',
+      'Skip Weekends -- compute durations in working days',
+      'Column visibility -- show or hide any data table column',
     ],
     placement: 'bottom',
   },
   {
     target: '[data-guide="btn-export-png"]',
-    icon: Image,
-    title: 'PNG Export',
+    icon: Share2,
+    title: 'Export & Share',
     description:
-      'Export the Gantt chart area as a PNG image for presentations, reports, or documentation.',
+      'Take your project anywhere. Export PNG snapshots for slides, or share the entire app as a single HTML file.',
     details: [
-      'Click "Export PNG" to download a snapshot of the chart',
-      'The exported image uses the current theme colors and background',
-      'Only the chart pane is captured (not the data table)',
+      'Export PNG -- pick "Gantt Chart Only" or "Include Headers" (full dashboard)',
+      'Share -- generates a self-contained HTML file you can open offline anywhere',
+      'Save to Excel -- the canonical format; everything round-trips losslessly',
     ],
     placement: 'bottom',
   },
@@ -186,7 +180,12 @@ export default function GuideOverlay({ open, onClose }) {
     });
   }, [open, step]);
 
-  useEffect(() => {
+  // useLayoutEffect (not useEffect) so the new target's rect is measured and
+  // `targetRect` updated synchronously after DOM commit but BEFORE the browser
+  // paints. Otherwise on every step change the tooltip would render once with
+  // (newStep, oldRect) -- placing it at the wrong screen position -- and then
+  // snap to the correct spot on the next render, producing a visible flash.
+  useLayoutEffect(() => {
     if (!open) {
       setStep(0);
       setTargetRect(null);
@@ -239,6 +238,20 @@ export default function GuideOverlay({ open, onClose }) {
 
     if (p === 'bottom') {
       tooltipStyle.top = targetRect.top + targetRect.height + GAP;
+      tooltipStyle.left = Math.max(
+        16,
+        Math.min(
+          targetRect.left + targetRect.width / 2 - TOOLTIP_MAX_W / 2,
+          window.innerWidth - TOOLTIP_MAX_W - 16,
+        ),
+      );
+    } else if (p === 'top') {
+      // Anchor the tooltip's bottom edge GAP px above the target's top edge.
+      // Using `bottom` (rather than `top` with an estimated tooltip height)
+      // lets the browser size the tooltip from its content without us having
+      // to guess the height. Clamp to >= 16 so it never disappears off-screen
+      // when the target sits near the viewport top.
+      tooltipStyle.bottom = Math.max(16, window.innerHeight - targetRect.top + GAP);
       tooltipStyle.left = Math.max(
         16,
         Math.min(

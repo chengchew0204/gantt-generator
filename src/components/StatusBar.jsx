@@ -56,6 +56,7 @@ export default function StatusBar({
 
   return (
     <div
+      data-guide="status-bar"
       className="flex items-center justify-between flex-shrink-0 px-2 gap-2"
       style={{
         height: 32,
