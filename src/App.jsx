@@ -195,7 +195,35 @@ function buildWbsTree(tasks, skipWeekends) {
     resolve(parentId);
   }
 
+  assignDepth(resultMap, childrenMap);
+
   return tasks.map((t) => resultMap.get(String(t.id)));
+}
+
+// Walk the WBS tree from every root downward, stamping task.depth for each
+// node. Cycle-safe: a `seen` set breaks the walk if a user sets two tasks'
+// parentId to each other. Orphans (parentId pointing at a missing task) are
+// treated as roots at depth 0 on the final sweep.
+function assignDepth(resultMap, childrenMap) {
+  const seen = new Set();
+  function walk(id, d) {
+    if (seen.has(id)) return;
+    seen.add(id);
+    const t = resultMap.get(id);
+    if (!t) return;
+    t.depth = d;
+    const kids = childrenMap.get(id) || [];
+    for (const k of kids) walk(String(k.id), d + 1);
+  }
+  const rootIds = [];
+  for (const [id, t] of resultMap.entries()) {
+    const pid = t.parentId ? String(t.parentId) : '';
+    if (!pid || !resultMap.has(pid)) rootIds.push(id);
+  }
+  for (const id of rootIds) walk(id, 0);
+  for (const t of resultMap.values()) {
+    if (t.depth == null) t.depth = 0;
+  }
 }
 
 function parseThemeHex(hex) {
@@ -408,9 +436,24 @@ export default function App() {
 
   const displayTasks = useMemo(() => {
     if (collapsedParents.size === 0) return enrichedTasks;
+    // Transitive walk: a task is hidden if ANY ancestor (not only its direct
+    // parent) is collapsed. Needed so collapsing a grandparent actually hides
+    // grandchildren, matching MS Project / Excel grouping behaviour.
+    const parentOf = new Map();
+    for (const t of enrichedTasks) {
+      parentOf.set(String(t.id), t.parentId ? String(t.parentId) : null);
+    }
+    const guard = new Set();
     return enrichedTasks.filter((t) => {
-      if (!t.parentId) return true;
-      return !collapsedParents.has(String(t.parentId));
+      let pid = parentOf.get(String(t.id));
+      guard.clear();
+      while (pid) {
+        if (guard.has(pid)) break;
+        guard.add(pid);
+        if (collapsedParents.has(pid)) return false;
+        pid = parentOf.get(pid);
+      }
+      return true;
     });
   }, [enrichedTasks, collapsedParents]);
 
