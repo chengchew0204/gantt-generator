@@ -7,6 +7,24 @@ const MIN_SHAPE_SIZE = 4;
 const DEFAULT_FILL = '#2383e2';
 const DEFAULT_OUTLINE = '#0b5394';
 
+// Excel-style rotation cursor for the shape rotation handle. CSS has no
+// native "spin-circle" cursor keyword, so we embed a 24x24 circular-arrow
+// glyph as an inline SVG data URL. The foreground stroke uses the app's
+// secondary-text gray (#6b6b6b, mirrors --color-text-secondary) for a
+// lighter, less visually heavy cursor; the white halo (3.5px stroke) keeps
+// the glyph readable on any shape fill or grid background. Hotspot at
+// 12,12 centres the icon on the handle. The 'grab' fallback matches the
+// pre-fix behaviour if a browser ever rejects the data URL -- strictly no
+// worse than today.
+const ROTATE_CURSOR_SVG =
+  "<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke-linecap='round' stroke-linejoin='round'>" +
+  "<path d='M21 12a9 9 0 1 1-3.6-7.2' stroke='white' stroke-width='3.5'/>" +
+  "<polyline points='21 3 21 9 15 9' stroke='white' stroke-width='3.5'/>" +
+  "<path d='M21 12a9 9 0 1 1-3.6-7.2' stroke='#6b6b6b' stroke-width='1.75'/>" +
+  "<polyline points='21 3 21 9 15 9' stroke='#6b6b6b' stroke-width='1.75'/>" +
+  "</svg>";
+const ROTATE_CURSOR = `url("data:image/svg+xml;utf8,${encodeURIComponent(ROTATE_CURSOR_SVG)}") 12 12, grab`;
+
 /**
  * SVG-based floating drawing layer that scrolls with the DataGrid's inner
  * positioning container. Handles shape drawing, selection, movement,
@@ -619,7 +637,7 @@ function SelectionDecorations({ shape, onResizeStart, onRotateStart }) {
         fill="#ffffff"
         stroke="var(--color-accent)"
         strokeWidth={1}
-        style={{ pointerEvents: 'all', cursor: 'grab' }}
+        style={{ pointerEvents: 'all', cursor: ROTATE_CURSOR }}
         onMouseDown={onRotateStart}
       />
       {handles.map((hd) => (
