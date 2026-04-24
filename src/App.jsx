@@ -156,6 +156,14 @@ function buildWbsTree(tasks, skipWeekends) {
   const resolved = new Set();
 
   function resolve(taskId) {
+    // Guard against orphan parentIds (dangling references). Happens when a
+    // user types a non-existent id into the Parent ID column or an imported
+    // xlsx has malformed hierarchy data. Matches the defensive early-return
+    // pattern used by assignDepth(). Returning a neutral aggregate keeps the
+    // caller's start/end/progress folding sane without polluting resultMap.
+    if (!resultMap.has(taskId)) {
+      return { startDate: null, endDate: null, progress: 0 };
+    }
     if (resolved.has(taskId)) {
       const t = resultMap.get(taskId);
       return { startDate: t.startDate, endDate: t.endDate, progress: t.progress || 0 };
@@ -552,8 +560,38 @@ export default function App() {
     ]);
   }, [recordAndSetTasks, customColumns]);
 
+  // Deleting a parent task must cascade to every descendant in a single step.
+  // Without the cascade the surviving children kept a dangling parentId, which
+  // made buildWbsTree's resolve() walk a missing resultMap entry and throw
+  // (TypeError: Cannot set properties of undefined) during render -> white
+  // screen. The same recordAndSetTasks call carries one undo snapshot so
+  // Ctrl+Z restores the parent plus every descendant atomically.
   const handleDeleteTask = useCallback((taskId) => {
-    recordAndSetTasks((prev) => prev.filter((t) => String(t.id) !== String(taskId)));
+    const targetId = String(taskId);
+    const current = tasksRef.current;
+    const toRemove = new Set([targetId]);
+    let grew = true;
+    while (grew) {
+      grew = false;
+      for (const t of current) {
+        const id = String(t.id);
+        if (toRemove.has(id)) continue;
+        const pid = t.parentId ? String(t.parentId) : '';
+        if (pid && toRemove.has(pid)) {
+          toRemove.add(id);
+          grew = true;
+        }
+      }
+    }
+    recordAndSetTasks((prev) => prev.filter((t) => !toRemove.has(String(t.id))));
+    setCollapsedParents((prev) => {
+      let changed = false;
+      const next = new Set(prev);
+      for (const id of toRemove) {
+        if (next.delete(id)) changed = true;
+      }
+      return changed ? next : prev;
+    });
   }, [recordAndSetTasks]);
 
   // Move a task (and all its descendants) so they appear before `beforeId` in the raw list.
