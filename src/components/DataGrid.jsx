@@ -1,5 +1,11 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { createFormulaEngine } from '../utils/FormulaEngine';
+import {
+  buildGridClipboard,
+  parseClipboardInput,
+  coerceNumeric,
+  colLabelFromIndex,
+} from '../utils/ClipboardUtils';
 import SpreadsheetToolbar from './SpreadsheetToolbar';
 import ShapeLayer, {
   nudgeShapes,
@@ -734,6 +740,222 @@ export default function DataGrid({ data, onChange }) {
     onChange({ ...data, cells: updated });
   }, [selectedShapeIds, shapes, handleShapesChange, selRect, cells, onChange, data]);
 
+  // Apply a parsed clipboard payload at the given anchor. Handles the three
+  // input shapes produced by parseClipboardInput (rich / html / tsv) with a
+  // single onChange call so the whole paste becomes one undo step.
+  const applyPaste = useCallback((parsed, anchor) => {
+    if (!parsed || !onChange) return;
+
+    let R;
+    let C;
+    let writeCell;
+    let pastedMerges = [];
+    let pastedColWidths = {};
+    let pastedRowHeights = {};
+
+    if (parsed.kind === 'rich') {
+      const p = parsed.payload;
+      R = p.rows;
+      C = p.cols;
+      writeCell = (r, c) => {
+        const src = p.cells[r]?.[c];
+        if (!src) return null;
+        const next = {};
+        if (src.v !== undefined) next.v = src.v;
+        if (src.f !== undefined) next.f = src.f;
+        if (src.s !== undefined) next.s = src.s;
+        return Object.keys(next).length > 0 ? next : null;
+      };
+      pastedMerges = (p.merges || []).map((m) => ({
+        r1: anchor.row + m.r1,
+        c1: anchor.col + m.c1,
+        r2: anchor.row + m.r2,
+        c2: anchor.col + m.c2,
+      }));
+      pastedColWidths = p.colWidths || {};
+      pastedRowHeights = p.rowHeights || {};
+    } else if (parsed.kind === 'html') {
+      R = parsed.grid.length;
+      C = R > 0 ? parsed.grid[0].length : 0;
+      const styleGrid = parsed.cellStyles || [];
+      writeCell = (r, c) => {
+        const text = parsed.grid[r]?.[c];
+        const style = styleGrid[r]?.[c];
+        const hasText = text != null && text !== '';
+        const hasStyle = style && Object.keys(style).length > 0;
+        if (!hasText && !hasStyle) return null;
+        const out = {};
+        if (hasText) out.v = coerceNumeric(text);
+        if (hasStyle) out.s = style;
+        return out;
+      };
+      pastedMerges = (parsed.merges || []).map((m) => ({
+        r1: anchor.row + m.r1,
+        c1: anchor.col + m.c1,
+        r2: anchor.row + m.r2,
+        c2: anchor.col + m.c2,
+      }));
+      pastedColWidths = parsed.colWidths || {};
+      pastedRowHeights = parsed.rowHeights || {};
+    } else if (parsed.kind === 'tsv') {
+      R = parsed.grid.length;
+      C = R > 0 ? parsed.grid[0].length : 0;
+      writeCell = (r, c) => {
+        const text = parsed.grid[r]?.[c];
+        if (text == null || text === '') return null;
+        return { v: coerceNumeric(text) };
+      };
+    } else {
+      return;
+    }
+
+    if (R <= 0 || C <= 0) return;
+
+    const targetRect = {
+      r1: anchor.row,
+      c1: anchor.col,
+      r2: anchor.row + R - 1,
+      c2: anchor.col + C - 1,
+    };
+
+    // Drop any existing merges that overlap the paste rect. Matches Google
+    // Sheets / most spreadsheet clones; avoids Excel's modal-dialog block.
+    const preservedMerges = (merges || []).filter((m) => !rectsOverlap(m, targetRect));
+
+    const updated = { ...cells };
+    for (let r = 0; r < R; r++) {
+      for (let c = 0; c < C; c++) {
+        const dstR = anchor.row + r;
+        const dstC = anchor.col + c;
+        const key = cellKey(dstR, dstC);
+        const next = writeCell(r, c);
+        if (next == null) {
+          // Rich paste: empty source cells overwrite the destination.
+          // Plain / html paste: empty cells leave the destination alone so
+          //   that pasting "A\t\tC" does not wipe cell B.
+          if (parsed.kind === 'rich' && updated[key]) {
+            delete updated[key];
+          }
+          continue;
+        }
+        if (parsed.kind === 'rich') {
+          updated[key] = next;
+        } else {
+          // HTML paste replaces destination cells that were blank and
+          // merges into styled ones; tsv paste does the same. Using a
+          // spread preserves any existing attributes on the destination
+          // that the source doesn't specify (e.g. untouched borders on
+          // neighbour cells).
+          const existing = updated[key];
+          updated[key] = { ...(existing || {}), ...next };
+        }
+      }
+    }
+
+    // Grow the sheet if the paste spills past the current extents, matching
+    // the "auto-expand" rule used by commitEdit.
+    let newRows = rows;
+    let newCols = cols;
+    if (anchor.row + R > rows - 3) newRows = Math.max(rows, anchor.row + R + 10);
+    if (anchor.col + C > cols - 2) newCols = Math.max(cols, anchor.col + C + 5);
+
+    const mergedMerges = pastedMerges.length > 0
+      ? [...preservedMerges, ...pastedMerges]
+      : preservedMerges;
+
+    // Apply column widths / row heights. Paste-time layout lookups are
+    // keyed on rect-local offsets (0..N-1); translate to absolute app-side
+    // keys (column label / row index) here so the DataGrid renders the
+    // imported block with its source sizing.
+    let nextColWidths = data.colWidths;
+    if (pastedColWidths && Object.keys(pastedColWidths).length > 0) {
+      nextColWidths = { ...(data.colWidths || {}) };
+      for (const [iStr, w] of Object.entries(pastedColWidths)) {
+        const i = parseInt(iStr, 10);
+        if (!Number.isFinite(i)) continue;
+        const absCol = anchor.col + i;
+        if (absCol < 0) continue;
+        nextColWidths[colLabelFromIndex(absCol)] = w;
+      }
+    }
+    let nextRowHeights = data.rowHeights;
+    if (pastedRowHeights && Object.keys(pastedRowHeights).length > 0) {
+      nextRowHeights = { ...(data.rowHeights || {}) };
+      for (const [rStr, h] of Object.entries(pastedRowHeights)) {
+        const r = parseInt(rStr, 10);
+        if (!Number.isFinite(r)) continue;
+        const absRow = anchor.row + r;
+        if (absRow < 0) continue;
+        nextRowHeights[absRow] = h;
+      }
+    }
+
+    onChange({
+      ...data,
+      cells: updated,
+      merges: mergedMerges,
+      rows: newRows,
+      cols: newCols,
+      colWidths: nextColWidths,
+      rowHeights: nextRowHeights,
+    });
+
+    // Move selection to cover the pasted region so subsequent Ctrl+V
+    // repeats or styling operations apply to the new block.
+    setSelectedCell({ row: anchor.row, col: anchor.col });
+    setSelectionEnd({ row: anchor.row + R - 1, col: anchor.col + C - 1 });
+  }, [onChange, data, cells, merges, rows, cols]);
+
+  const handleCopy = useCallback((e, isCut) => {
+    if (editingCell || editingShapeTextId) return;
+    const tag = e.target?.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+    if (!selRect || !e.clipboardData) return;
+
+    const { tsv, html } = buildGridClipboard({
+      cells,
+      merges,
+      rect: selRect,
+      displayValues,
+      colWidths,
+      rowHeights,
+    });
+    e.clipboardData.setData('text/plain', tsv);
+    e.clipboardData.setData('text/html', html);
+    e.preventDefault();
+
+    if (isCut && onChange) {
+      const updated = { ...cells };
+      for (let r = selRect.r1; r <= selRect.r2; r++) {
+        for (let c = selRect.c1; c <= selRect.c2; c++) {
+          const k = cellKey(r, c);
+          const existing = updated[k];
+          if (!existing) continue;
+          const rest = { ...existing };
+          delete rest.v;
+          delete rest.f;
+          if (Object.keys(rest).length === 0) delete updated[k];
+          else updated[k] = rest;
+        }
+      }
+      onChange({ ...data, cells: updated });
+    }
+  }, [editingCell, editingShapeTextId, selRect, cells, merges, displayValues, colWidths, rowHeights, onChange, data]);
+
+  const handlePaste = useCallback((e) => {
+    if (editingCell || editingShapeTextId) return;
+    const tag = e.target?.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+    if (!selectedCell || !selRect || !e.clipboardData) return;
+
+    const htmlText = e.clipboardData.getData('text/html') || '';
+    const plainText = e.clipboardData.getData('text/plain') || '';
+    const parsed = parseClipboardInput({ htmlText, plainText });
+    if (!parsed) return;
+    e.preventDefault();
+    applyPaste(parsed, { row: selRect.r1, col: selRect.c1 });
+  }, [editingCell, editingShapeTextId, selectedCell, selRect, applyPaste]);
+
   const handleGridKeyDown = useCallback((e) => {
     if (editingShapeTextId) return;
 
@@ -1185,6 +1407,9 @@ export default function DataGrid({ data, onChange }) {
       className="flex flex-col h-full outline-none"
       tabIndex={0}
       onKeyDown={handleGridKeyDown}
+      onCopy={(e) => handleCopy(e, false)}
+      onCut={(e) => handleCopy(e, true)}
+      onPaste={handlePaste}
       style={{ backgroundColor: 'var(--color-bg-primary)' }}
     >
       <SpreadsheetToolbar
