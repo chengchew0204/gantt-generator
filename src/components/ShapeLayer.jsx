@@ -49,6 +49,7 @@ export default function ShapeLayer({
   onBeginTextEdit,
   onCommitText,
   onToggleTextFormat,
+  zoomFactor = 1,
 }) {
   const svgRef = useRef(null);
   const [gesture, setGesture] = useState(null);
@@ -69,8 +70,9 @@ export default function ShapeLayer({
     const svg = svgRef.current;
     if (!svg) return { x: 0, y: 0 };
     const rect = svg.getBoundingClientRect();
-    return { x: clientX - rect.left, y: clientY - rect.top };
-  }, []);
+    const zf = zoomFactor || 1;
+    return { x: (clientX - rect.left) / zf, y: (clientY - rect.top) / zf };
+  }, [zoomFactor]);
 
   // Apply the active gesture to a shape and return the effective visible shape.
   const effectiveShape = useCallback(
