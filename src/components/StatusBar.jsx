@@ -3,7 +3,8 @@ import { Plus, Calendar, CalendarDays, ZoomIn, ZoomOut } from 'lucide-react';
 
 const ZOOM_MIN = 5;
 const ZOOM_MAX = 300;
-const ZOOM_STEP = 10;
+// Buttons step coarsely; the native number-input spinner steps 1% at a time (see <input step={1} />).
+const ZOOM_STEP = 5;
 
 export default function StatusBar({
   onAddTask,
@@ -96,6 +97,7 @@ export default function StatusBar({
             value={zoomInput}
             min={ZOOM_MIN}
             max={ZOOM_MAX}
+            step={1}
             onChange={handleZoomInputChange}
             onBlur={handleZoomInputCommit}
             onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
