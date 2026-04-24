@@ -153,6 +153,31 @@ function validateTaskHeaders(wb) {
  */
 const RESERVED_SHEETS = new Set(['tasks', 'settings']);
 
+// Excel has a hard 32767-character limit on the text content of a single
+// cell (SpreadsheetML's inline string / sharedString types enforce it).
+// SheetJS raises "Text length must not exceed 32767 characters" on write
+// when any cell value, label, or setting exceeds that size. Two places
+// in the export path can realistically blow past it:
+//
+//  1. `gridCellStyles` / `gridShapes` in the Settings sheet. After many
+//     paste operations (especially pasting formatted ranges from Excel
+//     repeatedly), the serialized JSON grows past 32k characters even
+//     though any individual cell only contributes a few bytes.
+//  2. A single grid cell's value, when the user pastes a chart image or
+//     another large HTML blob from Excel. The Office HTML clipboard
+//     representation of an image/chart gets flattened to text and lands
+//     in one cell.
+//
+// Both scenarios match the Save to Excel silent-failure bug. The
+// constants below sit comfortably below the hard limit to leave room
+// for XML escaping overhead (&amp; / &quot; ...) so a value that fits
+// in JavaScript memory still fits once SheetJS serialises it.
+const EXCEL_CELL_CHAR_LIMIT = 32767;
+const CELL_VALUE_SAFE_LIMIT = 32000;
+const SETTINGS_CHUNK_SIZE = 30000;
+const SETTINGS_CHUNK_LABEL_RE = /^(.*?) \((\d+)\/(\d+)\)$/;
+const CELL_TRUNCATED_SUFFIX = '...[truncated]';
+
 export async function importExcel(file) {
   validateFileType(file);
 
@@ -237,21 +262,21 @@ function buildWorkbook(tasks, settings, gridData) {
   const taskRows = tasks.map((t) => {
     const row = [
       t.id ?? '',
-      t.name ?? '',
-      t.dependency ?? '',
-      t.category ?? '',
+      clampCellValue(t.name ?? ''),
+      clampCellValue(t.dependency ?? ''),
+      clampCellValue(t.category ?? ''),
       formatDate(t.startDate),
       formatDate(t.endDate),
       t.duration ?? '',
       t.progress ?? '',
-      t.status ?? '',
-      t.owner ?? '',
-      t.remarks ?? '',
+      clampCellValue(t.status ?? ''),
+      clampCellValue(t.owner ?? ''),
+      clampCellValue(t.remarks ?? ''),
       formatDate(t.baselineStart),
       formatDate(t.baselineEnd),
       t.parentId ?? '',
     ];
-    for (const cc of customCols) row.push(t[cc.key] ?? '');
+    for (const cc of customCols) row.push(clampCellValue(t[cc.key] ?? ''));
     return row;
   });
   taskRows.unshift(allHeaders);
@@ -279,7 +304,21 @@ function buildWorkbook(tasks, settings, gridData) {
           ? String(settings[field.key])
           : field.defaultValue;
     }
-    settingsRows.push([field.label, value]);
+    // Split oversized values across multiple rows tagged "Label (i/n)".
+    // SheetJS rejects any cell longer than 32767 chars; the importer
+    // reassembles the chunks on load. Short values skip this path.
+    if (value.length > EXCEL_CELL_CHAR_LIMIT) {
+      const chunks = [];
+      for (let i = 0; i < value.length; i += SETTINGS_CHUNK_SIZE) {
+        chunks.push(value.slice(i, i + SETTINGS_CHUNK_SIZE));
+      }
+      const total = chunks.length;
+      for (let i = 0; i < chunks.length; i++) {
+        settingsRows.push([`${field.label} (${i + 1}/${total})`, chunks[i]]);
+      }
+    } else {
+      settingsRows.push([field.label, value]);
+    }
   }
   const settingsSheet = XLSX.utils.aoa_to_sheet(settingsRows);
   XLSX.utils.book_append_sheet(wb, settingsSheet, 'Settings');
@@ -446,12 +485,7 @@ function downloadXlsxBytes(bytes, filename) {
  * @param {object} [gridData]
  */
 export function exportExcel(tasks, settings, filename = 'GanttGen_Project.xlsx', gridData) {
-  const wb = buildWorkbook(tasks, settings, gridData);
-  const rawBytes = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
-  const sheetStyles = collectSheetStyles(settings, gridData);
-  let patched = injectCellStyles(rawBytes, sheetStyles);
-  const sheetShapes = collectSheetShapes(settings, gridData);
-  patched = injectShapes(patched, sheetShapes);
+  const patched = buildPatchedXlsxBytes(tasks, settings, gridData);
   downloadXlsxBytes(patched, filename);
 }
 
@@ -464,13 +498,38 @@ export function exportExcel(tasks, settings, filename = 'GanttGen_Project.xlsx',
  * @returns {string} base64-encoded xlsx data
  */
 export function exportExcelToBase64(tasks, settings, gridData) {
+  const patched = buildPatchedXlsxBytes(tasks, settings, gridData);
+  return uint8ToBase64(patched);
+}
+
+// Wrap the write + native-format injection pipeline so both exportExcel
+// and exportExcelToBase64 share the same defensive error reporting.
+// XLSX.write can throw for oversized cells / sheet-name clashes; rather
+// than let the error propagate silently to the console, surface an
+// actionable message. Cell-length failures are remapped specifically
+// because clampCellValue already handles every path we intentionally
+// write to - so a thrown length error points to unexpected input we
+// should investigate rather than at the user.
+function buildPatchedXlsxBytes(tasks, settings, gridData) {
   const wb = buildWorkbook(tasks, settings, gridData);
-  const rawBytes = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+  let rawBytes;
+  try {
+    rawBytes = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+  } catch (err) {
+    const msg = err && err.message ? err.message : String(err);
+    if (/Text length must not exceed/i.test(msg)) {
+      throw new Error(
+        'Save to Excel failed: one or more cells contain too much data to fit in an Excel file. ' +
+        'Remove any pasted charts, images, or very long text, then try again.',
+      );
+    }
+    throw err;
+  }
   const sheetStyles = collectSheetStyles(settings, gridData);
   let patched = injectCellStyles(rawBytes, sheetStyles);
   const sheetShapes = collectSheetShapes(settings, gridData);
   patched = injectShapes(patched, sheetShapes);
-  return uint8ToBase64(patched);
+  return patched;
 }
 
 
@@ -572,13 +631,35 @@ function parseSettingsSheet(wb) {
   }
 
   const settings = buildDefaultSettings();
+  // Chunked-value reassembly bucket. Each entry maps a base label to an
+  // ordered array of chunk strings. A value that fits in a single cell
+  // skips this path entirely.
+  const chunkBuckets = new Map();
   for (const row of rows) {
     const label = row['Setting'];
     const value = row['Value'];
+    if (typeof label !== 'string') continue;
+    const chunkMatch = label.match(SETTINGS_CHUNK_LABEL_RE);
+    if (chunkMatch) {
+      const baseLabel = chunkMatch[1];
+      const idx = parseInt(chunkMatch[2], 10) - 1;
+      const key = labelToKey.get(baseLabel);
+      if (!key || !Number.isFinite(idx) || idx < 0) continue;
+      let bucket = chunkBuckets.get(key);
+      if (!bucket) {
+        bucket = [];
+        chunkBuckets.set(key, bucket);
+      }
+      bucket[idx] = value == null ? '' : String(value);
+      continue;
+    }
     const key = labelToKey.get(label);
     if (key) {
       settings[key] = value;
     }
+  }
+  for (const [key, parts] of chunkBuckets) {
+    settings[key] = parts.map((p) => (p == null ? '' : p)).join('');
   }
   return settings;
 }
@@ -638,6 +719,33 @@ function parseCellRef(ref) {
   return { col: colIndexFromLabel(match[1]), row: parseInt(match[2], 10) - 1 };
 }
 
+// Cells whose serialised text is larger than Excel's hard per-cell
+// limit would make XLSX.write throw "Text length must not exceed 32767
+// characters" and abort the entire export. This happens when the user
+// pastes a chart or another large HTML payload from Excel that gets
+// flattened into a single cell. Trim rather than drop so the user still
+// sees a cell at that position, then mark the truncation so the problem
+// is visible on re-import.
+function clampCellValue(value) {
+  if (value == null) return '';
+  if (typeof value === 'number' || typeof value === 'boolean') return value;
+  if (value instanceof Date) return value;
+  const str = String(value);
+  if (str.length <= CELL_VALUE_SAFE_LIMIT) return str;
+  const keep = CELL_VALUE_SAFE_LIMIT - CELL_TRUNCATED_SUFFIX.length;
+  return str.slice(0, Math.max(0, keep)) + CELL_TRUNCATED_SUFFIX;
+}
+
+// Formulas are subject to the same per-cell ceiling. A user can paste
+// absurdly long formulas from Excel; drop them rather than fail the
+// whole export.
+function clampFormula(formula) {
+  if (formula == null) return '';
+  const str = String(formula);
+  if (str.length <= CELL_VALUE_SAFE_LIMIT) return str;
+  return str.slice(0, CELL_VALUE_SAFE_LIMIT);
+}
+
 function sanitizeSheetName(name) {
   let safe = String(name).replace(/[\\/*?[\]:]/g, '_').slice(0, 31);
   if (!safe) safe = 'Sheet';
@@ -690,7 +798,7 @@ function gridDataToSheet(tabData) {
     for (let c = 0; c < cols; c++) {
       const key = `${colLabelFromIndex(c)}${r + 1}`;
       const cell = cells[key];
-      row.push(cell ? (cell.v ?? '') : '');
+      row.push(cell ? clampCellValue(cell.v) : '');
     }
     aoa.push(row);
   }
@@ -712,10 +820,11 @@ function gridDataToSheet(tabData) {
       const ref = parseCellRef(key);
       if (!ref) continue;
       const wsKey = XLSX.utils.encode_cell({ r: ref.row, c: ref.col });
+      const formula = clampFormula(cell.f.startsWith('=') ? cell.f.slice(1) : cell.f);
       if (ws[wsKey]) {
-        ws[wsKey].f = cell.f.startsWith('=') ? cell.f.slice(1) : cell.f;
+        ws[wsKey].f = formula;
       } else {
-        ws[wsKey] = { t: 'n', v: cell.v ?? 0, f: cell.f.startsWith('=') ? cell.f.slice(1) : cell.f };
+        ws[wsKey] = { t: 'n', v: cell.v ?? 0, f: formula };
       }
     }
   }
