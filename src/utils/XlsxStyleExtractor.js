@@ -1,4 +1,5 @@
 import { unzipSync, strFromU8 } from 'fflate';
+import { fromExcelNumFmtCode } from './NumberFormat';
 
 /*
  * Read native Excel cell styles directly from the xlsx byte stream. Exists
@@ -79,6 +80,29 @@ function parseOoxmlColor(attrs) {
     return THEME_FALLBACK[idx] || null;
   }
   return null;
+}
+
+// Custom <numFmt numFmtId="N" formatCode="..."/> entries live in a
+// <numFmts> block at the top of styles.xml. Built-in IDs (0, 9, 10, 14,
+// 19, 49, ...) have no <numFmt> entry and are resolved directly from the
+// numFmtId via fromExcelNumFmtCode's builtinId path.
+function parseNumFmts(stylesXml) {
+  const out = new Map();
+  const block = stylesXml.match(/<numFmts\b[^>]*>([\s\S]*?)<\/numFmts>/);
+  if (!block) return out;
+  const entryRegex = /<numFmt\b[^>]*?numFmtId="(\d+)"[^>]*?formatCode="([^"]*)"[^>]*?\/?>/g;
+  let m;
+  while ((m = entryRegex.exec(block[1])) !== null) {
+    const id = parseInt(m[1], 10);
+    if (!Number.isFinite(id)) continue;
+    const code = m[2]
+      .replace(/&quot;/g, '"')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>');
+    out.set(id, code);
+  }
+  return out;
 }
 
 function parseFonts(stylesXml) {
@@ -174,8 +198,10 @@ function parseCellXfs(stylesXml) {
     const body = m[2] || '';
     const fontIdMatch = attrs.match(/\bfontId="(\d+)"/);
     const fillIdMatch = attrs.match(/\bfillId="(\d+)"/);
+    const numFmtIdMatch = attrs.match(/\bnumFmtId="(\d+)"/);
     const applyFontAttr = attrs.match(/\bapplyFont="([^"]+)"/);
     const applyFillAttr = attrs.match(/\bapplyFill="([^"]+)"/);
+    const applyNumberFormatAttr = attrs.match(/\bapplyNumberFormat="([^"]+)"/);
     const applyAlignAttr = attrs.match(/\bapplyAlignment="([^"]+)"/);
     const alignEl = body.match(/<alignment\b([^>]*)\/?>/);
     let hAlign;
@@ -190,8 +216,10 @@ function parseCellXfs(stylesXml) {
     xfs.push({
       fontId: fontIdMatch ? parseInt(fontIdMatch[1], 10) : 0,
       fillId: fillIdMatch ? parseInt(fillIdMatch[1], 10) : 0,
+      numFmtId: numFmtIdMatch ? parseInt(numFmtIdMatch[1], 10) : 0,
       applyFont: applyFontAttr ? applyFontAttr[1] : undefined,
       applyFill: applyFillAttr ? applyFillAttr[1] : undefined,
+      applyNumberFormat: applyNumberFormatAttr ? applyNumberFormatAttr[1] : undefined,
       applyAlignment: applyAlignAttr ? applyAlignAttr[1] : undefined,
       hasAlignmentElement,
       hAlign,
@@ -201,8 +229,30 @@ function parseCellXfs(stylesXml) {
   return xfs;
 }
 
-function resolveXfStyle(xf, fonts, fills) {
+function resolveXfStyle(xf, fonts, fills, numFmts) {
   const out = {};
+  // Number format: xf 0 always references numFmtId 0 (General) so default
+  // cells correctly emit no numFmt field. applyNumberFormat mirrors the
+  // applyFont / applyFill semantics - absent means apply, "0" / "false"
+  // opts out.
+  const applyNum = xf.applyNumberFormat !== '0' && xf.applyNumberFormat !== 'false';
+  if (applyNum && xf.numFmtId) {
+    const code = numFmts ? numFmts.get(xf.numFmtId) : undefined;
+    const resolved = fromExcelNumFmtCode(code, xf.numFmtId);
+    if (resolved && resolved.numFmt && resolved.numFmt !== 'general') {
+      out.numFmt = resolved.numFmt;
+      if (typeof resolved.decimals === 'number') out.decimals = resolved.decimals;
+      if (typeof resolved.currency === 'string' && resolved.currency) {
+        out.currency = resolved.currency;
+      }
+      if (typeof resolved.useThousands === 'boolean') {
+        out.useThousands = resolved.useThousands;
+      }
+      if (typeof resolved.negativeStyle === 'string' && resolved.negativeStyle) {
+        out.negativeStyle = resolved.negativeStyle;
+      }
+    }
+  }
   const font = fonts[xf.fontId] || null;
   // Treat applyFont as true by default. Excel explicitly opts out with
   // applyFont="0" or "false"; absent means "apply the font referenced by
@@ -315,8 +365,9 @@ export function extractNativeCellStyles(xlsxBytes) {
     const stylesXml = strFromU8(unzipped['xl/styles.xml']);
     const fonts = parseFonts(stylesXml);
     const fills = parseFills(stylesXml);
+    const numFmts = parseNumFmts(stylesXml);
     const xfs = parseCellXfs(stylesXml);
-    const xfStyles = xfs.map((xf) => resolveXfStyle(xf, fonts, fills));
+    const xfStyles = xfs.map((xf) => resolveXfStyle(xf, fonts, fills, numFmts));
 
     const workbookXml = unzipped['xl/workbook.xml']
       ? strFromU8(unzipped['xl/workbook.xml']) : '';

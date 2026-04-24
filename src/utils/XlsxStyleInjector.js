@@ -1,4 +1,5 @@
 import { unzipSync, zipSync, strFromU8, strToU8 } from 'fflate';
+import { toExcelNumFmtCode } from './NumberFormat';
 
 /*
  * Post-process an xlsx byte stream produced by SheetJS Community to embed
@@ -8,12 +9,15 @@ import { unzipSync, zipSync, strFromU8, strToU8 } from 'fflate';
  *   - Horizontal / vertical alignment (via <alignment> on <xf>)
  *   - Bold / italic / underline (via additional <font> entries and fontId
  *     / applyFont on <xf>)
+ *   - Number formats (via <numFmts> entries for custom codes and
+ *     numFmtId / applyNumberFormat on <xf>; built-in OOXML IDs are used
+ *     where possible to avoid emitting a <numFmt> entry at all).
  *
  * Strategy: leave SheetJS's output intact, then append the minimum number
- * of <font> and <xf> entries to xl/styles.xml and rewrite the relevant
- * <c> elements in each xl/worksheets/sheetN.xml with the resolved
- * s="..." attribute. Fonts and xfs are deduplicated; a cell with no
- * effective style is left untouched.
+ * of <numFmt>, <font>, and <xf> entries to xl/styles.xml and rewrite the
+ * relevant <c> elements in each xl/worksheets/sheetN.xml with the
+ * resolved s="..." attribute. Fonts, numFmts, and xfs are deduplicated;
+ * a cell with no effective style is left untouched.
  *
  * The injector is deliberately conservative: if sheetStyles is empty or
  * styles.xml is missing / unparseable, it returns the input bytes
@@ -22,6 +26,23 @@ import { unzipSync, zipSync, strFromU8, strToU8 } from 'fflate';
 
 const H_VALID = new Set(['left', 'center', 'right']);
 const V_APP_TO_OOXML = { top: 'top', middle: 'center', bottom: 'bottom' };
+const NUM_FMT_VALID = new Set([
+  'general',
+  'number',
+  'currency',
+  'accounting',
+  'shortDate',
+  'longDate',
+  'time',
+  'percentage',
+  'fraction',
+  'scientific',
+  'text',
+]);
+
+// Excel reserves numFmtIds below 164 for built-ins. Custom entries must
+// start at 164 per the OOXML spec.
+const CUSTOM_NUM_FMT_START = 164;
 
 function escapeRegex(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -35,7 +56,23 @@ function normalizeStyle(raw) {
   if (raw.underline) out.underline = true;
   if (raw.hAlign && H_VALID.has(raw.hAlign)) out.hAlign = raw.hAlign;
   if (raw.vAlign && V_APP_TO_OOXML[raw.vAlign]) out.vAlign = raw.vAlign;
-  if (!out.bold && !out.italic && !out.underline && !out.hAlign && !out.vAlign) {
+  if (raw.numFmt && NUM_FMT_VALID.has(raw.numFmt) && raw.numFmt !== 'general') {
+    out.numFmt = raw.numFmt;
+    if (typeof raw.decimals === 'number') out.decimals = raw.decimals;
+    if (typeof raw.currency === 'string' && raw.currency) out.currency = raw.currency;
+    if (typeof raw.useThousands === 'boolean') out.useThousands = raw.useThousands;
+    if (typeof raw.negativeStyle === 'string' && raw.negativeStyle) {
+      out.negativeStyle = raw.negativeStyle;
+    }
+  }
+  if (
+    !out.bold &&
+    !out.italic &&
+    !out.underline &&
+    !out.hAlign &&
+    !out.vAlign &&
+    !out.numFmt
+  ) {
     return null;
   }
   return out;
@@ -57,8 +94,8 @@ function hasAlignment(s) {
   return !!(s.hAlign || s.vAlign);
 }
 
-function xfKey(s, fontId) {
-  return `f${fontId}|${alignKey(s)}`;
+function xfKey(s, fontId, numFmtId) {
+  return `n${numFmtId}|f${fontId}|${alignKey(s)}`;
 }
 
 function buildFontEntry(defaultInner, s) {
@@ -69,16 +106,30 @@ function buildFontEntry(defaultInner, s) {
   return `<font>${markers.join('')}${defaultInner}</font>`;
 }
 
-function buildXfEntry(s, fontId) {
+function escapeXmlAttr(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function buildNumFmtEntry(id, code) {
+  return `<numFmt numFmtId="${id}" formatCode="${escapeXmlAttr(code)}"/>`;
+}
+
+function buildXfEntry(s, fontId, numFmtId) {
   const applyFont = fontId > 0;
   const applyAlign = hasAlignment(s);
+  const applyNum = numFmtId > 0;
   const attrs = [
-    'numFmtId="0"',
+    `numFmtId="${numFmtId}"`,
     `fontId="${fontId}"`,
     'fillId="0"',
     'borderId="0"',
     'xfId="0"',
   ];
+  if (applyNum) attrs.push('applyNumberFormat="1"');
   if (applyFont) attrs.push('applyFont="1"');
   if (applyAlign) attrs.push('applyAlignment="1"');
   const open = `<xf ${attrs.join(' ')}`;
@@ -164,6 +215,28 @@ function patchDefaultXfAlignment(stylesXml) {
   return stylesXml.replace(cellXfsBlock[0], `<cellXfs${cellXfsBlock[0].match(/<cellXfs\b([^>]*)>/)[1]}>${patchedInner}</cellXfs>`);
 }
 
+function parseExistingNumFmts(stylesXml) {
+  // Build a map of existing formatCode -> numFmtId from any <numFmts>
+  // block SheetJS or an earlier injector run wrote. We dedup against
+  // this to avoid emitting duplicates on re-save.
+  const out = new Map();
+  const block = stylesXml.match(/<numFmts\b[^>]*>([\s\S]*?)<\/numFmts>/);
+  if (!block) return out;
+  const entryRegex = /<numFmt\b[^>]*?numFmtId="(\d+)"[^>]*?formatCode="([^"]*)"[^>]*?\/?>/g;
+  let m;
+  while ((m = entryRegex.exec(block[1])) !== null) {
+    const id = parseInt(m[1], 10);
+    const code = m[2]
+      .replace(/&quot;/g, '"')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>');
+    if (!Number.isFinite(id) || id < CUSTOM_NUM_FMT_START) continue;
+    out.set(code, id);
+  }
+  return out;
+}
+
 function extractDefaultFontInner(stylesXml) {
   // Grab the inner content of the FIRST <font> element so we can clone its
   // size / color / family / scheme when building bold / italic / underline
@@ -244,6 +317,31 @@ export function injectCellStyles(xlsxBytes, sheetStyles) {
   const currentFontCount = parseInt(fontsMatch[1], 10);
   const defaultFontInner = extractDefaultFontInner(stylesXml);
 
+  // numFmt dedup: resolve the style's format code via NumberFormat. Built-in
+  // IDs (0 = General, 9 = 0%, 10 = 0.00%, 14 = m/d/yyyy, 19 = h:mm:ss AM/PM,
+  // 49 = @, ...) require no <numFmt> entry. Custom codes register under
+  // ids starting at CUSTOM_NUM_FMT_START and reuse entries already present
+  // in the workbook on re-save.
+  const existingCustomNumFmts = parseExistingNumFmts(stylesXml);
+  const codeToNumFmtId = new Map(existingCustomNumFmts);
+  const newNumFmtEntries = [];
+  let nextCustomNumFmtId = CUSTOM_NUM_FMT_START;
+  for (const id of existingCustomNumFmts.values()) {
+    if (id >= nextCustomNumFmtId) nextCustomNumFmtId = id + 1;
+  }
+  function resolveNumFmtId(style) {
+    if (!style.numFmt || style.numFmt === 'general') return 0;
+    const excel = toExcelNumFmtCode(style);
+    if (!excel || !excel.code) return 0;
+    if (typeof excel.id === 'number') return excel.id;
+    const cached = codeToNumFmtId.get(excel.code);
+    if (cached != null) return cached;
+    const id = nextCustomNumFmtId++;
+    codeToNumFmtId.set(excel.code, id);
+    newNumFmtEntries.push(buildNumFmtEntry(id, excel.code));
+    return id;
+  }
+
   // Font dedup: one entry per unique (bold, italic, underline) combination.
   // The all-false combination reuses fontId 0 (existing default).
   const fontRegistry = new Map();
@@ -259,19 +357,21 @@ export function injectCellStyles(xlsxBytes, sheetStyles) {
     return id;
   }
 
-  // XF dedup: one entry per unique (fontId, hAlign, vAlign). Cells mapping
-  // to xfId 0 (no font style and no alignment) need no patching, but we
-  // already filtered those out via normalizeStyle.
+  // XF dedup: one entry per unique (numFmtId, fontId, hAlign, vAlign).
+  // Cells mapping to xfId 0 (no font style, no alignment, no number
+  // format) need no patching, but we already filtered those out via
+  // normalizeStyle.
   const xfRegistry = new Map();
   const newXfChunks = [];
   let nextXfId = currentXfCount;
   function resolveXfId(style) {
+    const nfid = resolveNumFmtId(style);
     const fid = resolveFontId(style);
-    const k = xfKey(style, fid);
+    const k = xfKey(style, fid, nfid);
     if (xfRegistry.has(k)) return xfRegistry.get(k);
     const id = nextXfId++;
     xfRegistry.set(k, id);
-    newXfChunks.push(buildXfEntry(style, fid));
+    newXfChunks.push(buildXfEntry(style, fid, nfid));
     return id;
   }
 
@@ -291,6 +391,28 @@ export function injectCellStyles(xlsxBytes, sheetStyles) {
     // xf above to set vertical=center for unstyled cells. Persist that.
     unzipped['xl/styles.xml'] = strToU8(stylesXml);
     return zipSync(unzipped);
+  }
+
+  if (newNumFmtEntries.length > 0) {
+    const existingBlock = stylesXml.match(/<numFmts\b[^>]*>([\s\S]*?)<\/numFmts>/);
+    if (existingBlock) {
+      // Splice new entries into the existing block and refresh the count.
+      const existingEntryCount = existingCustomNumFmts.size;
+      const newCount = existingEntryCount + newNumFmtEntries.length;
+      stylesXml = stylesXml.replace(
+        /<numFmts\b[^>]*>([\s\S]*?)<\/numFmts>/,
+        (_m, inner) => `<numFmts count="${newCount}">${inner}${newNumFmtEntries.join('')}</numFmts>`,
+      );
+    } else {
+      // Insert a fresh <numFmts> block as the first child of <styleSheet>.
+      // OOXML requires numFmts to precede fonts / fills / borders / cellXfs.
+      const block = `<numFmts count="${newNumFmtEntries.length}">${newNumFmtEntries.join('')}</numFmts>`;
+      const styleSheetMatch = stylesXml.match(/<styleSheet\b[^>]*>/);
+      if (styleSheetMatch) {
+        const insertAt = styleSheetMatch.index + styleSheetMatch[0].length;
+        stylesXml = stylesXml.slice(0, insertAt) + block + stylesXml.slice(insertAt);
+      }
+    }
   }
 
   if (newFontChunks.length > 0) {

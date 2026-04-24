@@ -1,3 +1,5 @@
+import { formatCellValue, toExcelNumFmtCode } from './NumberFormat';
+
 // Excel-compatible clipboard codec for the DataGrid.
 //
 // Copy path writes two representations atomically:
@@ -409,6 +411,9 @@ export function buildGridClipboard({
   };
 
   // TSV: display value for formulas, skip cells covered by a merge anchor.
+  // Route the raw value through formatCellValue so that a percent / date /
+  // currency cell pastes into Excel as the formatted display string
+  // (e.g. "50%", "1/15/2024"), matching what the user sees on screen.
   const tsvGrid = [];
   for (let r = 0; r < rowCount; r++) {
     const row = [];
@@ -417,8 +422,11 @@ export function buildGridClipboard({
       const key = cellKey(rect.r1 + r, rect.c1 + c);
       const dv = displayValues ? displayValues[key] : undefined;
       const cell = cells[key];
-      const v = dv != null && dv !== '' ? dv : cell ? cell.v : '';
-      row.push(v == null ? '' : v);
+      const raw = dv != null && dv !== '' ? dv : cell ? cell.v : '';
+      const text = cell && cell.s && cell.s.numFmt
+        ? formatCellValue(raw, cell.s)
+        : (raw == null ? '' : String(raw));
+      row.push(text);
     }
     tsvGrid.push(row);
   }
@@ -527,8 +535,10 @@ export function buildGridClipboard({
       const key = cellKey(rect.r1 + r, rect.c1 + c);
       const dv = displayValues ? displayValues[key] : undefined;
       const cell = cells[key];
-      const v = dv != null && dv !== '' ? dv : cell ? cell.v : '';
-      const text = v == null ? '' : String(v);
+      const raw = dv != null && dv !== '' ? dv : cell ? cell.v : '';
+      const text = cell && cell.s && cell.s.numFmt
+        ? formatCellValue(raw, cell.s)
+        : (raw == null ? '' : String(raw));
 
       const styleParts = [];
       if (firstTdOfRow && rh) {
@@ -613,6 +623,18 @@ function cellStyleToInlineCss(s) {
           : 'solid';
       const color = b.color || 'windowtext';
       parts.push(`border-${side}:${w} ${css} ${color}`);
+    }
+  }
+  // Emit mso-number-format so Excel's HTML paste filter recognises the
+  // format and the pasted cell keeps behaving numerically (sorting,
+  // totals, chart series) instead of becoming a literal text string.
+  if (s.numFmt && s.numFmt !== 'general') {
+    const excel = toExcelNumFmtCode(s);
+    if (excel && excel.code) {
+      const escaped = excel.code
+        .replace(/\\/g, '\\\\')
+        .replace(/"/g, '\\"');
+      parts.push(`mso-number-format:"${escaped}"`);
     }
   }
   return parts.join(';');

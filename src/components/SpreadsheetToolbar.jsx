@@ -11,6 +11,8 @@ import {
   AlignVerticalJustifyCenter,
   AlignVerticalJustifyEnd,
   ChevronDown,
+  ChevronRight,
+  Percent,
   Shapes,
   Sparkles,
   BringToFront,
@@ -20,6 +22,13 @@ import {
   Trash2,
 } from 'lucide-react';
 import { groupShapePresets, renderShapePath, isLineShape, getShapePreset } from '../utils/ShapePresets';
+import {
+  FORMAT_ORDER,
+  FORMAT_LABELS,
+  CURRENCY_SHORTLIST,
+  formatCellValue,
+  previewFormat,
+} from '../utils/NumberFormat';
 
 export default function SpreadsheetToolbar({
   cellRef,
@@ -31,7 +40,10 @@ export default function SpreadsheetToolbar({
   onBarKeyDown,
   barInputRef,
   cellStyle,
+  selectedCellRawValue,
   onApplyStyle,
+  onApplyNumberFormat,
+  onBumpDecimals,
   onApplyBorderPreset,
   onToggleGridLines,
   showGridLines,
@@ -48,6 +60,12 @@ export default function SpreadsheetToolbar({
 }) {
   const style = cellStyle || {};
   const showShapeRow = !!selectedShape || !!shapeMode;
+
+  const isPercent = style.numFmt === 'percentage';
+  const isCommaStyle =
+    style.numFmt === 'number' &&
+    style.useThousands !== false &&
+    style.negativeStyle === 'parens';
 
   return (
     <div className="flex flex-col flex-shrink-0" style={{ borderBottom: '1px solid var(--color-border)' }}>
@@ -118,6 +136,44 @@ export default function SpreadsheetToolbar({
           onClick={() => onApplyStyle({ vAlign: style.vAlign === 'bottom' ? undefined : 'bottom' })}
           title="Align bottom"
         />
+
+        <div className="w-px h-4 mx-0.5 flex-shrink-0" style={{ backgroundColor: 'var(--color-border)' }} />
+
+        <NumberFormatMenu
+          style={style}
+          previewValue={selectedCellRawValue}
+          onApply={onApplyNumberFormat}
+        />
+
+        <FormatButton
+          icon={Percent}
+          active={isPercent}
+          onClick={() =>
+            onApplyNumberFormat?.(
+              isPercent
+                ? { numFmt: 'general' }
+                : { numFmt: 'percentage', decimals: 0 },
+            )
+          }
+          title="Percent Style (Ctrl+Shift+5)"
+        />
+        <CommaStyleButton
+          active={isCommaStyle}
+          onClick={() =>
+            onApplyNumberFormat?.(
+              isCommaStyle
+                ? { numFmt: 'general' }
+                : {
+                    numFmt: 'number',
+                    decimals: 2,
+                    useThousands: true,
+                    negativeStyle: 'parens',
+                  },
+            )
+          }
+        />
+        <IncreaseDecimalButton onClick={() => onBumpDecimals?.(1)} />
+        <DecreaseDecimalButton onClick={() => onBumpDecimals?.(-1)} />
 
         <div className="w-px h-4 mx-0.5 flex-shrink-0" style={{ backgroundColor: 'var(--color-border)' }} />
 
@@ -698,6 +754,277 @@ function MergeMenu({ onMerge, onUnmerge, isMergedSelection }) {
         </div>
       )}
     </div>
+  );
+}
+
+function NumberFormatMenu({ style, previewValue, onApply }) {
+  const [open, setOpen] = useState(false);
+  const [currencySubmenu, setCurrencySubmenu] = useState(false);
+  const panelRef = useRef(null);
+  const close = useCallback(() => {
+    setOpen(false);
+    setCurrencySubmenu(false);
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    const handleClickOutside = (e) => {
+      if (panelRef.current && !panelRef.current.contains(e.target)) close();
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [open, close]);
+
+  const currentFmt = style?.numFmt || 'general';
+  const label = FORMAT_LABELS[currentFmt] || 'General';
+
+  // Pick a sensible preview subject. When the current cell doesn't have a
+  // usable raw value, fall back to a representative constant per format so
+  // users can still see what each option produces.
+  const fallbackPreview = 1234.5;
+  const previewSubject = (() => {
+    if (typeof previewValue === 'number' && Number.isFinite(previewValue)) return previewValue;
+    if (typeof previewValue === 'string' && previewValue.trim() !== '') {
+      const n = Number(previewValue);
+      if (Number.isFinite(n)) return n;
+      return previewValue;
+    }
+    return fallbackPreview;
+  })();
+
+  const buildPartialForFormat = (fmt) => {
+    switch (fmt) {
+      case 'general':    return { numFmt: 'general' };
+      case 'number':     return { numFmt: 'number', decimals: 2, useThousands: true, negativeStyle: 'minus' };
+      case 'currency':   return { numFmt: 'currency', decimals: 2, currency: style?.currency || '$', negativeStyle: 'minus' };
+      case 'accounting': return { numFmt: 'accounting', decimals: 2, currency: style?.currency || '$' };
+      case 'shortDate':  return { numFmt: 'shortDate' };
+      case 'longDate':   return { numFmt: 'longDate' };
+      case 'time':       return { numFmt: 'time' };
+      case 'percentage': return { numFmt: 'percentage', decimals: 2 };
+      case 'fraction':   return { numFmt: 'fraction', decimals: 1 };
+      case 'scientific': return { numFmt: 'scientific', decimals: 2 };
+      case 'text':       return { numFmt: 'text' };
+      default:           return { numFmt: 'general' };
+    }
+  };
+
+  const handleSelect = (fmt) => {
+    if (fmt === 'accounting') {
+      setCurrencySubmenu(true);
+      return;
+    }
+    onApply?.(buildPartialForFormat(fmt));
+    close();
+  };
+
+  const handleSelectCurrency = (symbol) => {
+    onApply?.({ numFmt: 'accounting', decimals: 2, currency: symbol });
+    close();
+  };
+
+  return (
+    <div ref={panelRef} className="relative flex items-center flex-shrink-0">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        onMouseDown={(e) => e.preventDefault()}
+        title="Number format"
+        className="flex items-center justify-center h-6 px-1 rounded cursor-pointer transition-colors gap-0.5"
+        style={{
+          color: 'var(--color-text-secondary)',
+          backgroundColor: 'transparent',
+          minWidth: 76,
+          fontSize: 11,
+        }}
+        onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)'; }}
+        onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; }}
+      >
+        <span className="truncate" style={{ maxWidth: 68 }}>{label}</span>
+        <ChevronDown size={10} style={{ opacity: 0.6 }} />
+      </button>
+
+      {open && !currencySubmenu && (
+        <div
+          className="absolute top-full left-0 mt-1 py-1 rounded-md shadow-lg z-50"
+          style={{
+            backgroundColor: 'var(--color-bg-secondary)',
+            border: '1px solid var(--color-border)',
+            width: 240,
+          }}
+        >
+          {FORMAT_ORDER.map((fmt) => {
+            const partial = buildPartialForFormat(fmt);
+            const preview = previewFormat(previewSubject, partial);
+            const active = currentFmt === fmt;
+            const showChevron = fmt === 'accounting';
+            return (
+              <button
+                key={fmt}
+                onClick={() => handleSelect(fmt)}
+                onMouseDown={(e) => e.preventDefault()}
+                className="flex items-center justify-between w-full px-3 py-1 text-left text-[11px] cursor-pointer transition-colors"
+                style={{
+                  color: 'var(--color-text-secondary)',
+                  backgroundColor: active ? 'var(--color-accent-muted)' : 'transparent',
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = active ? 'var(--color-accent-muted)' : 'transparent'; }}
+              >
+                <span className="font-medium" style={{ color: 'var(--color-text-primary)' }}>{FORMAT_LABELS[fmt]}</span>
+                <span className="flex items-center gap-1">
+                  <span className="tabular-nums" style={{ color: 'var(--color-text-muted)' }}>{preview}</span>
+                  {showChevron && <ChevronRight size={10} style={{ opacity: 0.6 }} />}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {open && currencySubmenu && (
+        <div
+          className="absolute top-full left-0 mt-1 py-1 rounded-md shadow-lg z-50"
+          style={{
+            backgroundColor: 'var(--color-bg-secondary)',
+            border: '1px solid var(--color-border)',
+            width: 260,
+          }}
+        >
+          <button
+            onClick={() => setCurrencySubmenu(false)}
+            onMouseDown={(e) => e.preventDefault()}
+            className="flex items-center gap-1 w-full px-3 py-1 text-left text-[10px] cursor-pointer transition-colors"
+            style={{ color: 'var(--color-text-muted)' }}
+            onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; }}
+          >
+            <ChevronRight size={10} style={{ transform: 'rotate(180deg)', opacity: 0.6 }} />
+            Back
+          </button>
+          <div className="my-1 mx-2" style={{ height: 1, backgroundColor: 'var(--color-border-subtle)' }} />
+          <div className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wide" style={{ color: 'var(--color-text-muted)' }}>
+            Accounting Currency
+          </div>
+          {CURRENCY_SHORTLIST.map((opt, idx) => {
+            const preview = formatCellValue(previewSubject, {
+              numFmt: 'accounting',
+              decimals: 2,
+              currency: opt.symbol,
+            });
+            const active = (style?.currency || '$') === opt.symbol && currentFmt === 'accounting';
+            return (
+              <button
+                key={idx}
+                onClick={() => handleSelectCurrency(opt.symbol)}
+                onMouseDown={(e) => e.preventDefault()}
+                className="flex items-center justify-between w-full px-3 py-1 text-left text-[11px] cursor-pointer transition-colors"
+                style={{
+                  color: 'var(--color-text-secondary)',
+                  backgroundColor: active ? 'var(--color-accent-muted)' : 'transparent',
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = active ? 'var(--color-accent-muted)' : 'transparent'; }}
+              >
+                <span>{opt.label}</span>
+                <span className="tabular-nums" style={{ color: 'var(--color-text-muted)' }}>{preview}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CommaStyleButton({ active, onClick }) {
+  return (
+    <button
+      onClick={onClick}
+      onMouseDown={(e) => e.preventDefault()}
+      title="Comma Style"
+      className="flex items-center justify-center w-6 h-6 rounded cursor-pointer transition-colors flex-shrink-0"
+      style={{
+        backgroundColor: active ? 'var(--color-accent-muted)' : 'transparent',
+        color: active ? 'var(--color-accent)' : 'var(--color-text-muted)',
+      }}
+      onMouseEnter={(e) => {
+        if (!active) {
+          e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)';
+          e.currentTarget.style.color = 'var(--color-text-secondary)';
+        }
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.backgroundColor = active ? 'var(--color-accent-muted)' : 'transparent';
+        e.currentTarget.style.color = active ? 'var(--color-accent)' : 'var(--color-text-muted)';
+      }}
+    >
+      {/* SVG comma with a rounded teardrop head and a curving tail,
+          matching Excel's Comma Style glyph. Filled path so the rounded
+          upper part reads clearly at 24x24 without depending on the
+          user's system serif font. */}
+      <svg width={14} height={14} viewBox="0 0 16 16" fill="currentColor">
+        <path d="M 7.2 6 C 9.5 6 10.2 7.4 10.2 9 C 10.2 11 8.8 12.8 6.6 14 L 6 12.8 C 7.6 12 8.4 11 8.4 10 C 7 10 6 9.2 6 8 C 6 6.8 6.5 6 7.2 6 Z" />
+      </svg>
+    </button>
+  );
+}
+
+function IncreaseDecimalButton({ onClick }) {
+  return (
+    <button
+      onClick={onClick}
+      onMouseDown={(e) => e.preventDefault()}
+      title="Increase Decimal"
+      className="flex items-center justify-center w-6 h-6 rounded cursor-pointer transition-colors flex-shrink-0"
+      style={{ color: 'var(--color-text-muted)', backgroundColor: 'transparent' }}
+      onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)'; e.currentTarget.style.color = 'var(--color-text-secondary)'; }}
+      onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = 'var(--color-text-muted)'; }}
+    >
+      {/* Excel's Increase Decimal glyph in a square 2-row layout:
+            row 1: <-.0   (short version with arrow pointing into it)
+            row 2:  .00   (longer version sitting under the arrow tail)
+          The arrow-plus-shorter-number is on top because "increase"
+          shifts precision to the left; the destination (more decimals)
+          sits on the bottom row. Drawn as SVG so it stays crisp at
+          1x DPR and indifferent to the user's system font. */}
+      <svg width={16} height={14} viewBox="0 0 16 14" fill="none" stroke="currentColor">
+        <g strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
+          <line x1="5" y1="4" x2="9" y2="4" />
+          <polyline points="7,2.5 5,4 7,5.5" fill="none" />
+        </g>
+        <text x="10" y="6" fontSize="5.5" fontWeight="700" fontFamily="Arial, Helvetica, sans-serif" fill="currentColor" stroke="none">.0</text>
+        <text x="5" y="12" fontSize="5.5" fontWeight="700" fontFamily="Arial, Helvetica, sans-serif" fill="currentColor" stroke="none">.00</text>
+      </svg>
+    </button>
+  );
+}
+
+function DecreaseDecimalButton({ onClick }) {
+  return (
+    <button
+      onClick={onClick}
+      onMouseDown={(e) => e.preventDefault()}
+      title="Decrease Decimal"
+      className="flex items-center justify-center w-6 h-6 rounded cursor-pointer transition-colors flex-shrink-0"
+      style={{ color: 'var(--color-text-muted)', backgroundColor: 'transparent' }}
+      onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)'; e.currentTarget.style.color = 'var(--color-text-secondary)'; }}
+      onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = 'var(--color-text-muted)'; }}
+    >
+      {/* Excel's Decrease Decimal glyph in a square 2-row layout:
+            row 1:  .00
+            row 2: ->.0   (arrow pointing out, shorter number on bottom)
+          Mirror of the Increase layout - the arrow-plus-shorter-number
+          sits on the bottom because "decrease" shifts precision to the
+          right. */}
+      <svg width={16} height={14} viewBox="0 0 16 14" fill="none" stroke="currentColor">
+        <text x="5" y="6" fontSize="5.5" fontWeight="700" fontFamily="Arial, Helvetica, sans-serif" fill="currentColor" stroke="none">.00</text>
+        <g strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
+          <line x1="5" y1="11" x2="9" y2="11" />
+          <polyline points="7,9.5 9,11 7,12.5" fill="none" />
+        </g>
+        <text x="10" y="13" fontSize="5.5" fontWeight="700" fontFamily="Arial, Helvetica, sans-serif" fill="currentColor" stroke="none">.0</text>
+      </svg>
+    </button>
   );
 }
 

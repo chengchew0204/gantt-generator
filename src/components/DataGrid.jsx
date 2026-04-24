@@ -6,6 +6,11 @@ import {
   coerceNumeric,
   colLabelFromIndex,
 } from '../utils/ClipboardUtils';
+import {
+  formatCellValue,
+  parseCellInput,
+  bumpDecimals as bumpDecimalsStyle,
+} from '../utils/NumberFormat';
 import SpreadsheetToolbar from './SpreadsheetToolbar';
 import ShapeLayer, {
   nudgeShapes,
@@ -369,19 +374,22 @@ export default function DataGrid({ data, onChange }) {
 
     if (onChange) {
       const updated = { ...cells };
-      const isFormula = typeof rawInput === 'string' && rawInput.startsWith('=');
+      const existingStyle = updated[key]?.s;
+      // Route user input through the format-aware parser so Percentage
+      // strips '%', Currency strips the symbol, Text stores verbatim
+      // (including any leading '='), and dates normalise to ISO.
+      const parsed = parseCellInput(rawInput, existingStyle);
 
       if (rawInput === '' || rawInput == null) {
         delete updated[key];
         if (engine) engine.setCellValue(row, col, null);
-      } else if (isFormula) {
-        if (engine) engine.setCellValue(row, col, rawInput);
-        const computed = engine ? engine.getDisplayValue(row, col) : rawInput;
+      } else if (parsed.formula) {
+        if (engine) engine.setCellValue(row, col, parsed.formula);
+        const computed = engine ? engine.getDisplayValue(row, col) : parsed.formula;
         const oldCell = updated[key];
-        updated[key] = { ...oldCell, f: rawInput, v: computed };
+        updated[key] = { ...oldCell, f: parsed.formula, v: computed };
       } else {
-        const numVal = Number(rawInput);
-        const val = rawInput === '' ? '' : (Number.isFinite(numVal) ? numVal : rawInput);
+        const val = parsed.value;
         if (engine) engine.setCellValue(row, col, val);
         const oldCell = updated[key];
         updated[key] = { ...oldCell, v: val };
@@ -740,6 +748,46 @@ export default function DataGrid({ data, onChange }) {
     onChange({ ...data, cells: updated });
   }, [selectedShapeIds, shapes, handleShapesChange, selRect, cells, onChange, data]);
 
+  // Apply a number-format partial (numFmt / decimals / currency / ...)
+  // across the current selection. Unlike applyStyleToSelected this path
+  // is cell-only - shapes ignore number formatting.
+  const applyNumberFormatToSelected = useCallback((partial) => {
+    if (!partial || !selRect || !onChange) return;
+    const updated = { ...cells };
+    for (let r = selRect.r1; r <= selRect.r2; r++) {
+      for (let c = selRect.c1; c <= selRect.c2; c++) {
+        const key = cellKey(r, c);
+        const existing = updated[key] || {};
+        const nextStyle = { ...(existing.s || {}), ...partial };
+        // Clearing back to 'general' discards the other number-format
+        // fields so stale decimals / currency / negativeStyle don't
+        // leak into downstream Excel exports as dead format entries.
+        if (partial.numFmt === 'general' || partial.numFmt === 'text') {
+          delete nextStyle.decimals;
+          delete nextStyle.currency;
+          delete nextStyle.useThousands;
+          delete nextStyle.negativeStyle;
+        }
+        updated[key] = { ...existing, s: nextStyle };
+      }
+    }
+    onChange({ ...data, cells: updated });
+  }, [selRect, cells, onChange, data]);
+
+  const bumpDecimalsInSelection = useCallback((delta) => {
+    if (!selRect || !onChange) return;
+    const updated = { ...cells };
+    for (let r = selRect.r1; r <= selRect.r2; r++) {
+      for (let c = selRect.c1; c <= selRect.c2; c++) {
+        const key = cellKey(r, c);
+        const existing = updated[key] || {};
+        const partial = bumpDecimalsStyle(existing.s, delta);
+        updated[key] = { ...existing, s: { ...(existing.s || {}), ...partial } };
+      }
+    }
+    onChange({ ...data, cells: updated });
+  }, [selRect, cells, onChange, data]);
+
   // Apply a parsed clipboard payload at the given anchor. Handles the three
   // input shapes produced by parseClipboardInput (rich / html / tsv) with a
   // single onChange call so the whole paste becomes one undo step.
@@ -1035,6 +1083,43 @@ export default function DataGrid({ data, onChange }) {
         applyStyleToSelected({ underline: !(cells[cellKey(row, col)]?.s?.underline) });
         return;
       }
+
+      // Excel number-format shortcuts (Ctrl+Shift+1..6 / ~).
+      // We key off e.code so the mapping works regardless of the
+      // active keyboard layout's Shift+digit character.
+      if (e.shiftKey) {
+        let partial = null;
+        switch (e.code) {
+          case 'Backquote':
+            partial = { numFmt: 'general' };
+            break;
+          case 'Digit1':
+            partial = { numFmt: 'number', decimals: 2, useThousands: true, negativeStyle: 'parens' };
+            break;
+          case 'Digit2':
+            partial = { numFmt: 'time' };
+            break;
+          case 'Digit3':
+            partial = { numFmt: 'shortDate' };
+            break;
+          case 'Digit4':
+            partial = { numFmt: 'currency', decimals: 2, currency: cells[cellKey(row, col)]?.s?.currency || '$', negativeStyle: 'parens' };
+            break;
+          case 'Digit5':
+            partial = { numFmt: 'percentage', decimals: 0 };
+            break;
+          case 'Digit6':
+            partial = { numFmt: 'scientific', decimals: 2 };
+            break;
+          default:
+            break;
+        }
+        if (partial) {
+          e.preventDefault();
+          applyNumberFormatToSelected(partial);
+          return;
+        }
+      }
     }
 
     if (editingCell) return;
@@ -1107,6 +1192,7 @@ export default function DataGrid({ data, onChange }) {
     cells,
     startEditing,
     applyStyleToSelected,
+    applyNumberFormatToSelected,
     selRect,
     onChange,
     data,
@@ -1118,7 +1204,6 @@ export default function DataGrid({ data, onChange }) {
     handleDeleteSelectedShapes,
     clearShapeSelection,
     handleShapesChange,
-    applyStyleToSelected,
   ]);
 
   const handleStartBarEdit = useCallback(() => {
@@ -1167,7 +1252,8 @@ export default function DataGrid({ data, onChange }) {
     for (let ri = 0; ri < rows; ri++) {
       const key = cellKey(ri, colIdx);
       const cd = cells[key];
-      const text = String(displayValues[key] ?? cd?.v ?? '');
+      const raw = displayValues[key] ?? cd?.v ?? '';
+      const text = formatCellValue(raw, cd?.s);
       if (!text) continue;
       const fontSize = cd?.s?.fontSize || 12;
       const bold = cd?.s?.bold ? '700' : '400';
@@ -1371,6 +1457,9 @@ export default function DataGrid({ data, onChange }) {
   const selectedKey = selectedCell ? cellKey(selectedCell.row, selectedCell.col) : null;
   const selectedCellData = selectedKey ? cells[selectedKey] : null;
   const toolbarDisplayValue = selectedCellData?.f || String(displayValues[selectedKey] ?? selectedCellData?.v ?? '');
+  const selectedCellRawValue = selectedKey != null
+    ? (displayValues[selectedKey] != null ? displayValues[selectedKey] : selectedCellData?.v)
+    : undefined;
   const toolbarCellRef = isMultiSel
     ? `${cellKey(selRect.r1, selRect.c1)}:${cellKey(selRect.r2, selRect.c2)}`
     : selectedKey;
@@ -1422,7 +1511,10 @@ export default function DataGrid({ data, onChange }) {
         onBarKeyDown={handleEditKeyDown}
         barInputRef={barInputRef}
         cellStyle={toolbarStyle}
+        selectedCellRawValue={selectedCellRawValue}
         onApplyStyle={applyStyleToSelected}
+        onApplyNumberFormat={applyNumberFormatToSelected}
+        onBumpDecimals={bumpDecimalsInSelection}
         onApplyBorderPreset={handleApplyBorderPreset}
         onToggleGridLines={handleToggleGridLines}
         showGridLines={showGridLines}
@@ -1519,7 +1611,7 @@ export default function DataGrid({ data, onChange }) {
                   const key = cellKey(ri, ci);
                   const cellData = cells[key];
                   const dv = displayValues[key] ?? cellData?.v ?? '';
-                  const displayStr = dv != null ? String(dv) : '';
+                  const displayStr = formatCellValue(dv, cellData?.s);
                   const w = getColW(ci);
                   const isAnchor = selectedCell && selectedCell.row === ri && selectedCell.col === ci;
                   const inRange = selRect && ri >= selRect.r1 && ri <= selRect.r2 && ci >= selRect.c1 && ci <= selRect.c2;
@@ -1635,7 +1727,7 @@ export default function DataGrid({ data, onChange }) {
             const key = cellKey(m.r1, m.c1);
             const cellData = cells[key];
             const dv = displayValues[key] ?? cellData?.v ?? '';
-            const displayStr = dv != null ? String(dv) : '';
+            const displayStr = formatCellValue(dv, cellData?.s);
             const cellCss = cellStyleToCss(cellData?.s);
             const aB = cellData?.s?.borders;
             const cornerTR = cells[cellKey(m.r1, m.c2)];
