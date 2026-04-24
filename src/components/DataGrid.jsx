@@ -217,6 +217,8 @@ export default function DataGrid({ data, onChange, zoomPct = 100 }) {
   const editModeRef = useRef('enter');
   const isDraggingRef = useRef(false);
 
+  const [viewport, setViewport] = useState({ w: 0, h: 0 });
+
   const engineRef = useRef(null);
   const [displayValues, setDisplayValues] = useState({});
 
@@ -342,6 +344,47 @@ export default function DataGrid({ data, onChange, zoomPct = 100 }) {
   // requiring the user to click a cell first.
   useEffect(() => {
     containerRef.current?.focus({ preventScroll: true });
+  }, []);
+
+  // Track the scroll-viewport size so the grid can render enough padding
+  // rows/cols to fill the visible area at any zoom level.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    let rafId = 0;
+    const update = () => {
+      // offsetWidth/Height includes scrollbar width, so it stays stable
+      // even when padding rows/cols toggle scrollbar visibility. Using
+      // clientWidth/Height would feedback-loop via the ResizeObserver as
+      // scrollbars appear and disappear.
+      const w = Math.floor(el.offsetWidth);
+      const h = Math.floor(el.offsetHeight);
+      setViewport((prev) => (prev.w === w && prev.h === h ? prev : { w, h }));
+    };
+    // rAF-batch updates so state changes happen outside the RO callback,
+    // avoiding "ResizeObserver loop" errors when rendering more cells
+    // changes the container's intrinsic size.
+    const schedule = () => {
+      if (rafId) return;
+      rafId = requestAnimationFrame(() => {
+        rafId = 0;
+        update();
+      });
+    };
+    update();
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', schedule);
+      return () => {
+        window.removeEventListener('resize', schedule);
+        if (rafId) cancelAnimationFrame(rafId);
+      };
+    }
+    const ro = new ResizeObserver(schedule);
+    ro.observe(el);
+    return () => {
+      ro.disconnect();
+      if (rafId) cancelAnimationFrame(rafId);
+    };
   }, []);
 
   const getColW = useCallback((colIdx) => {
@@ -1434,27 +1477,67 @@ export default function DataGrid({ data, onChange, zoomPct = 100 }) {
     setPendingMerge(null);
   }, []);
 
+  // Pad the rendered grid so there are enough rows/columns to cover the
+  // viewport even when CSS zoom shrinks the grid content. `rows`/`cols`
+  // still track the persisted/data-backed extents; `displayRows`/`displayCols`
+  // only affect rendering (and click/arrow targets that map onto empty
+  // cells). Writing into a padded cell goes through commitEdit's usual
+  // auto-expand path, so the data dims grow naturally when the user types.
+  const displayCols = useMemo(() => {
+    if (!viewport.w) return cols;
+    const usable = viewport.w / zoomFactor - ROW_HEADER_WIDTH;
+    let acc = 0;
+    let n = 0;
+    while (acc < usable) {
+      acc += n < cols ? getColW(n) : DEFAULT_COL_WIDTH;
+      n++;
+    }
+    return Math.max(cols, n);
+  }, [cols, getColW, viewport.w, zoomFactor]);
+
+  const displayRows = useMemo(() => {
+    if (!viewport.h) return rows;
+    const usable = viewport.h / zoomFactor - HEADER_HEIGHT;
+    let acc = 0;
+    let n = 0;
+    while (acc < usable) {
+      acc += n < rows ? getRowH(n) : DEFAULT_ROW_HEIGHT;
+      n++;
+    }
+    return Math.max(rows, n);
+  }, [rows, getRowH, viewport.h, zoomFactor]);
+
+  const getDisplayColW = useCallback(
+    (ci) => (ci < cols ? getColW(ci) : DEFAULT_COL_WIDTH),
+    [cols, getColW],
+  );
+
+  const getDisplayRowH = useCallback(
+    (ri) => (ri < rows ? getRowH(ri) : DEFAULT_ROW_HEIGHT),
+    [rows, getRowH],
+  );
+
   const totalWidth = useMemo(() => {
-    return ROW_HEADER_WIDTH + Array.from({ length: cols }, (_, i) => getColW(i)).reduce((a, b) => a + b, 0);
-  }, [cols, getColW]);
+    return ROW_HEADER_WIDTH + Array.from({ length: displayCols }, (_, i) => getDisplayColW(i)).reduce((a, b) => a + b, 0);
+  }, [displayCols, getDisplayColW]);
 
   const totalHeight = useMemo(() => {
-    return HEADER_HEIGHT + Array.from({ length: rows }, (_, i) => getRowH(i)).reduce((a, b) => a + b, 0);
-  }, [rows, getRowH]);
+    return HEADER_HEIGHT + Array.from({ length: displayRows }, (_, i) => getDisplayRowH(i)).reduce((a, b) => a + b, 0);
+  }, [displayRows, getDisplayRowH]);
 
   const colOffsets = useMemo(() => {
-    const arr = new Array(cols + 1);
+    const arr = new Array(displayCols + 1);
     arr[0] = 0;
-    for (let i = 0; i < cols; i++) arr[i + 1] = arr[i] + getColW(i);
+    for (let i = 0; i < displayCols; i++) arr[i + 1] = arr[i] + getDisplayColW(i);
     return arr;
-  }, [cols, getColW]);
+  }, [displayCols, getDisplayColW]);
 
   const rowOffsets = useMemo(() => {
-    const arr = new Array(rows + 1);
+    const arr = new Array(displayRows + 1);
     arr[0] = 0;
-    for (let i = 0; i < rows; i++) arr[i + 1] = arr[i] + getRowH(i);
+    for (let i = 0; i < displayRows; i++) arr[i + 1] = arr[i] + getDisplayRowH(i);
     return arr;
-  }, [rows, getRowH]);
+  }, [displayRows, getDisplayRowH]);
 
   const selectedKey = selectedCell ? cellKey(selectedCell.row, selectedCell.col) : null;
   const selectedCellData = selectedKey ? cells[selectedKey] : null;
@@ -1547,8 +1630,8 @@ export default function DataGrid({ data, onChange, zoomPct = 100 }) {
                 color: 'var(--color-text-muted)',
               }}
             />
-            {Array.from({ length: cols }, (_, ci) => {
-              const w = getColW(ci);
+            {Array.from({ length: displayCols }, (_, ci) => {
+              const w = getDisplayColW(ci);
               const label = colLabel(ci);
               const isSelected = selRect && ci >= selRect.c1 && ci <= selRect.c2;
               return (
@@ -1576,8 +1659,8 @@ export default function DataGrid({ data, onChange, zoomPct = 100 }) {
           </div>
 
           {/* Rows */}
-          {Array.from({ length: rows }, (_, ri) => {
-            const rh = getRowH(ri);
+          {Array.from({ length: displayRows }, (_, ri) => {
+            const rh = getDisplayRowH(ri);
             const isRowSelected = selRect && ri >= selRect.r1 && ri <= selRect.r2;
             return (
               <div key={ri} className="flex" style={{ height: rh }}>
@@ -1597,7 +1680,7 @@ export default function DataGrid({ data, onChange, zoomPct = 100 }) {
                     className="absolute bottom-0 left-0 w-full h-[3px] cursor-row-resize z-10"
                   />
                 </div>
-                {Array.from({ length: cols }, (_, ci) => {
+                {Array.from({ length: displayCols }, (_, ci) => {
                   const mergeKey = `${ri},${ci}`;
                   const isMergeAnchor = mergeLookup.anchorMap.has(mergeKey);
                   const isMergeCovered = mergeLookup.coveredMap.has(mergeKey);
@@ -1606,7 +1689,7 @@ export default function DataGrid({ data, onChange, zoomPct = 100 }) {
                       <div
                         key={ci}
                         className="flex-shrink-0"
-                        style={{ width: getColW(ci), height: rh }}
+                        style={{ width: getDisplayColW(ci), height: rh }}
                       />
                     );
                   }
@@ -1614,7 +1697,7 @@ export default function DataGrid({ data, onChange, zoomPct = 100 }) {
                   const cellData = cells[key];
                   const dv = displayValues[key] ?? cellData?.v ?? '';
                   const displayStr = formatCellValue(dv, cellData?.s);
-                  const w = getColW(ci);
+                  const w = getDisplayColW(ci);
                   const isAnchor = selectedCell && selectedCell.row === ri && selectedCell.col === ci;
                   const inRange = selRect && ri >= selRect.r1 && ri <= selRect.r2 && ci >= selRect.c1 && ci <= selRect.c2;
                   const isEditing = editingCell && editingCell.row === ri && editingCell.col === ci;
