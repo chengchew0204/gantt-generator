@@ -1734,8 +1734,36 @@ export default function DataGrid({ data, onChange }) {
             const cornerBL = cells[cellKey(m.r2, m.c1)];
             const cornerBR = cells[cellKey(m.r2, m.c2)];
 
-            const effTop = borderSideToCss(aB?.top) || borderStyle;
-            const effLeft = borderSideToCss(aB?.left) || borderStyle;
+            // Merge overlay top/left abut painters that already own the
+            // 1px grid line (cell-above's borderBottom, cell-left's
+            // borderRight, or the header row/column at the boundary).
+            // Adding a fallback here would stack to ~2px and, via
+            // box-sizing: border-box, push merge content 1px down/right
+            // (issue #26). Mirror the per-cell pattern: only render top/
+            // left when the anchor has an explicit border AND no neighbour
+            // in the abutting row/column has an explicit conflicting one.
+            // Right/bottom keep their fallback chain because neighbours
+            // do not draw left/top borders by default.
+            let aboveExplicitBottom = false;
+            if (m.r1 > 0) {
+              for (let c = m.c1; c <= m.c2; c++) {
+                if (cells[cellKey(m.r1 - 1, c)]?.s?.borders?.bottom) {
+                  aboveExplicitBottom = true;
+                  break;
+                }
+              }
+            }
+            let leftExplicitRight = false;
+            if (m.c1 > 0) {
+              for (let r = m.r1; r <= m.r2; r++) {
+                if (cells[cellKey(r, m.c1 - 1)]?.s?.borders?.right) {
+                  leftExplicitRight = true;
+                  break;
+                }
+              }
+            }
+            const effTop = aB?.top && !aboveExplicitBottom ? borderSideToCss(aB.top) : undefined;
+            const effLeft = aB?.left && !leftExplicitRight ? borderSideToCss(aB.left) : undefined;
             const effRight =
               borderSideToCss(aB?.right) ||
               borderSideToCss(cornerTR?.s?.borders?.right) ||
