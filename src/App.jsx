@@ -296,6 +296,7 @@ export default function App() {
   const [colWidths, setColWidths] = useState({});
   const [ganttScale, setGanttScale] = useState('day');
   const [ganttZoom, setGanttZoom] = useState(100);
+  const [gridZoom, setGridZoom] = useState(100);
   const [activeTab, setActiveTab] = useState('gantt');
   const [tabs, setTabs] = useState([]);
   const [gridData, setGridData] = useState({});
@@ -654,6 +655,11 @@ export default function App() {
     markDirty();
   }, [markDirty]);
 
+  const handleGridZoomChange = useCallback((v) => {
+    setGridZoom(v);
+    markDirty();
+  }, [markDirty]);
+
   const handleAddColumn = useCallback((label) => {
     const key = 'custom_' + Date.now().toString(36);
     const col = { key, label, type: 'text' };
@@ -834,6 +840,7 @@ export default function App() {
       next.colWidths = JSON.stringify(colWidths);
       next.ganttScale = ganttScale;
       next.ganttZoom = String(ganttZoom);
+      next.gridZoom = String(gridZoom);
       next.tabs = JSON.stringify(tabs);
       next.activeTab = activeTab;
       const stylesMap = {};
@@ -858,7 +865,7 @@ export default function App() {
       next.gridShapes = JSON.stringify(shapesMap);
       return next;
     });
-  }, [viewOptions, visibleColumns, categoryColors, projectName, customColumns, columnOrder, splitRatio, collapsedParents, colWidths, ganttScale, ganttZoom, tabs, activeTab, gridData]);
+  }, [viewOptions, visibleColumns, categoryColors, projectName, customColumns, columnOrder, splitRatio, collapsedParents, colWidths, ganttScale, ganttZoom, gridZoom, tabs, activeTab, gridData]);
 
   useEffect(() => {
     const handler = (e) => {
@@ -931,6 +938,8 @@ export default function App() {
       setGanttScale(s.ganttScale === 'week' ? 'week' : 'day');
       const zoom = parseInt(s.ganttZoom, 10);
       setGanttZoom(Number.isFinite(zoom) && zoom >= 5 && zoom <= 300 ? zoom : 100);
+      const gz = parseInt(s.gridZoom, 10);
+      setGridZoom(Number.isFinite(gz) && gz >= 5 && gz <= 300 ? gz : 100);
       const colors = extractThemeColors(s);
       applyThemeToDOM(colors);
       setActiveTheme(s.themeName || 'Notion Light');
@@ -1294,6 +1303,7 @@ export default function App() {
           <DataGrid
             data={gridData[activeTab]}
             onChange={(newData) => handleGridCellChange(activeTab, newData)}
+            zoomPct={gridZoom}
           />
         </div>
       )}
@@ -1304,6 +1314,8 @@ export default function App() {
         onScaleChange={handleGanttScaleChange}
         zoomPct={ganttZoom}
         onZoomChange={handleGanttZoomChange}
+        gridZoomPct={gridZoom}
+        onGridZoomChange={handleGridZoomChange}
         activeTab={activeTab}
         tabs={tabs}
         onSelectTab={handleSelectTab}

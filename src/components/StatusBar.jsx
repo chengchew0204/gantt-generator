@@ -12,6 +12,8 @@ export default function StatusBar({
   onScaleChange,
   zoomPct,
   onZoomChange,
+  gridZoomPct,
+  onGridZoomChange,
   activeTab,
   tabs,
   onSelectTab,
@@ -20,12 +22,16 @@ export default function StatusBar({
   onDeleteTab,
   onReorderTab,
 }) {
-  const [zoomInput, setZoomInput] = useState(String(zoomPct));
-  useEffect(() => { setZoomInput(String(zoomPct)); }, [zoomPct]);
+  const isGantt = activeTab === 'gantt';
+  const activeZoomPct = isGantt ? zoomPct : gridZoomPct;
+  const activeOnZoomChange = isGantt ? onZoomChange : onGridZoomChange;
+
+  const [zoomInput, setZoomInput] = useState(String(activeZoomPct));
+  useEffect(() => { setZoomInput(String(activeZoomPct)); }, [activeZoomPct]);
 
   const handleZoomStep = (direction) => {
-    const next = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, zoomPct + direction * ZOOM_STEP));
-    onZoomChange(next);
+    const next = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, activeZoomPct + direction * ZOOM_STEP));
+    activeOnZoomChange(next);
   };
 
   const handleZoomInputChange = (e) => {
@@ -33,7 +39,7 @@ export default function StatusBar({
     setZoomInput(raw);
     const parsed = parseInt(raw, 10);
     if (!isNaN(parsed) && parsed >= ZOOM_MIN && parsed <= ZOOM_MAX) {
-      onZoomChange(parsed);
+      activeOnZoomChange(parsed);
     }
   };
 
@@ -41,14 +47,12 @@ export default function StatusBar({
     const parsed = parseInt(zoomInput, 10);
     if (!isNaN(parsed)) {
       const clamped = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(parsed)));
-      onZoomChange(clamped);
+      activeOnZoomChange(clamped);
       setZoomInput(String(clamped));
     } else {
-      setZoomInput(String(zoomPct));
+      setZoomInput(String(activeZoomPct));
     }
   };
-
-  const isGantt = activeTab === 'gantt';
 
   return (
     <div
@@ -85,36 +89,37 @@ export default function StatusBar({
         onReorderTab={onReorderTab}
       />
 
-      {/* Right: Scale + Zoom (visible only on Gantt tab) */}
-      {isGantt && (
-        <div className="flex items-center gap-1.5 flex-shrink-0">
-          <ScaleButton active={scale === 'day'} onClick={() => onScaleChange('day')} icon={Calendar} label="Day" />
-          <ScaleButton active={scale === 'week'} onClick={() => onScaleChange('week')} icon={CalendarDays} label="Week" />
-          <div className="w-px h-4 mx-0.5" style={{ backgroundColor: 'var(--color-border)' }} />
-          <ZoomButton icon={ZoomOut} onClick={() => handleZoomStep(-1)} disabled={zoomPct <= ZOOM_MIN} />
-          <input
-            type="number"
-            value={zoomInput}
-            min={ZOOM_MIN}
-            max={ZOOM_MAX}
-            step={1}
-            onChange={handleZoomInputChange}
-            onBlur={handleZoomInputCommit}
-            onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
-            className="tabular-nums text-center font-medium bg-transparent outline-none border-b"
-            style={{
-              width: 34,
-              fontSize: 11,
-              color: 'var(--color-text-secondary)',
-              borderColor: 'var(--color-border)',
-              MozAppearance: 'textfield',
-            }}
-          />
-          <span className="text-[11px]" style={{ color: 'var(--color-text-muted)' }}>%</span>
-          <ZoomButton icon={ZoomIn} onClick={() => handleZoomStep(1)} disabled={zoomPct >= ZOOM_MAX} />
-        </div>
-      )}
-      {!isGantt && <div />}
+      {/* Right: Scale (Gantt only) + Zoom (all tabs) */}
+      <div className="flex items-center gap-1.5 flex-shrink-0">
+        {isGantt && (
+          <>
+            <ScaleButton active={scale === 'day'} onClick={() => onScaleChange('day')} icon={Calendar} label="Day" />
+            <ScaleButton active={scale === 'week'} onClick={() => onScaleChange('week')} icon={CalendarDays} label="Week" />
+            <div className="w-px h-4 mx-0.5" style={{ backgroundColor: 'var(--color-border)' }} />
+          </>
+        )}
+        <ZoomButton icon={ZoomOut} onClick={() => handleZoomStep(-1)} disabled={activeZoomPct <= ZOOM_MIN} />
+        <input
+          type="number"
+          value={zoomInput}
+          min={ZOOM_MIN}
+          max={ZOOM_MAX}
+          step={1}
+          onChange={handleZoomInputChange}
+          onBlur={handleZoomInputCommit}
+          onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+          className="tabular-nums text-center font-medium bg-transparent outline-none border-b"
+          style={{
+            width: 34,
+            fontSize: 11,
+            color: 'var(--color-text-secondary)',
+            borderColor: 'var(--color-border)',
+            MozAppearance: 'textfield',
+          }}
+        />
+        <span className="text-[11px]" style={{ color: 'var(--color-text-muted)' }}>%</span>
+        <ZoomButton icon={ZoomIn} onClick={() => handleZoomStep(1)} disabled={activeZoomPct >= ZOOM_MAX} />
+      </div>
     </div>
   );
 }

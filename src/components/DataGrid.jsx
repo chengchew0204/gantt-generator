@@ -188,7 +188,8 @@ function parseFormulaRefs(text) {
   return highlights;
 }
 
-export default function DataGrid({ data, onChange }) {
+export default function DataGrid({ data, onChange, zoomPct = 100 }) {
+  const zoomFactor = Math.max(0.05, Math.min(3, (Number.isFinite(zoomPct) ? zoomPct : 100) / 100));
   const rows = data?.rows ?? 50;
   const cols = data?.cols ?? 26;
   const cells = data?.cells ?? {};
@@ -582,14 +583,15 @@ export default function DataGrid({ data, onChange }) {
       const scrollEl = scrollRef.current;
       if (!scrollEl) return;
       const rect = scrollEl.getBoundingClientRect();
-      const x = ev.clientX - rect.left + scrollEl.scrollLeft - ROW_HEADER_WIDTH;
-      const y = ev.clientY - rect.top + scrollEl.scrollTop - HEADER_HEIGHT;
-
+      const xVis = ev.clientX - rect.left + scrollEl.scrollLeft;
+      const yVis = ev.clientY - rect.top + scrollEl.scrollTop;
+      const xL = xVis / zoomFactor - ROW_HEADER_WIDTH;
+      const yL = yVis / zoomFactor - HEADER_HEIGHT;
       let cumW = 0;
       let endCol = 0;
       for (let ci = 0; ci < cols; ci++) {
         const w = getColW(ci);
-        if (x < cumW + w) { endCol = ci; break; }
+        if (xL < cumW + w) { endCol = ci; break; }
         cumW += w;
         endCol = ci;
       }
@@ -597,7 +599,7 @@ export default function DataGrid({ data, onChange }) {
       let endRow = 0;
       for (let ri = 0; ri < rows; ri++) {
         const h = getRowH(ri);
-        if (y < cumH + h) { endRow = ri; break; }
+        if (yL < cumH + h) { endRow = ri; break; }
         cumH += h;
         endRow = ri;
       }
@@ -612,7 +614,7 @@ export default function DataGrid({ data, onChange }) {
 
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
-  }, [isFormulaEditing, editingCell, editText, insertReference, commitEdit, cols, rows, getColW, getRowH, getMergeAt, clearShapeSelection]);
+  }, [isFormulaEditing, editingCell, editText, insertReference, commitEdit, cols, rows, getColW, getRowH, getMergeAt, clearShapeSelection, zoomFactor]);
 
   const handleCellClick = useCallback(() => {
     // Selection is handled entirely in handleCellMouseDown now.
@@ -1222,7 +1224,7 @@ export default function DataGrid({ data, onChange }) {
     const key = colLabel(colIdx);
     let latestW = startWidth;
     const onMove = (e) => {
-      latestW = Math.max(MIN_COL_WIDTH, startWidth + (e.clientX - startX));
+      latestW = Math.max(MIN_COL_WIDTH, startWidth + (e.clientX - startX) / zoomFactor);
       setColWidths((prev) => ({ ...prev, [key]: latestW }));
     };
     const onUp = () => {
@@ -1242,7 +1244,7 @@ export default function DataGrid({ data, onChange }) {
     document.body.style.userSelect = 'none';
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
-  }, [onChange, data]);
+  }, [onChange, data, zoomFactor]);
 
   const handleAutoFitCol = useCallback((colIdx) => {
     const colKey = colLabel(colIdx);
@@ -1274,7 +1276,7 @@ export default function DataGrid({ data, onChange }) {
   const handleResizeRow = useCallback((rowIdx, startY, startHeight) => {
     let latestH = startHeight;
     const onMove = (e) => {
-      latestH = Math.max(MIN_ROW_HEIGHT, startHeight + (e.clientY - startY));
+      latestH = Math.max(MIN_ROW_HEIGHT, startHeight + (e.clientY - startY) / zoomFactor);
       setRowHeights((prev) => ({ ...prev, [rowIdx]: latestH }));
     };
     const onUp = () => {
@@ -1294,7 +1296,7 @@ export default function DataGrid({ data, onChange }) {
     document.body.style.userSelect = 'none';
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
-  }, [onChange, data]);
+  }, [onChange, data, zoomFactor]);
 
   const handleApplyBorderPreset = useCallback((presetId) => {
     if (!selRect || !onChange) return;
@@ -1532,7 +1534,7 @@ export default function DataGrid({ data, onChange }) {
 
       {/* Grid */}
       <div ref={scrollRef} className="flex-1 overflow-auto">
-        <div style={{ minWidth: totalWidth, position: 'relative' }}>
+        <div style={{ minWidth: totalWidth, position: 'relative', zoom: zoomFactor }}>
           {/* Column headers */}
           <div className="flex sticky top-0 z-10" style={{ backgroundColor: 'var(--color-bg-secondary)' }}>
             <div
@@ -1871,6 +1873,7 @@ export default function DataGrid({ data, onChange }) {
             shapes={shapes}
             selectedIds={selectedShapeIds}
             shapeMode={shapeMode}
+            zoomFactor={zoomFactor}
             colOffsets={colOffsets}
             rowOffsets={rowOffsets}
             rowHeaderWidth={ROW_HEADER_WIDTH}
