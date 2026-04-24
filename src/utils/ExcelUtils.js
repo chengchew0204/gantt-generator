@@ -97,6 +97,8 @@ export function downloadTemplate() {
   const settingsSheet = XLSX.utils.aoa_to_sheet(settingsData);
   XLSX.utils.book_append_sheet(wb, settingsSheet, 'Settings');
 
+  applyHiddenSheetFlags(wb);
+
   XLSX.writeFile(wb, 'GanttGen_Template.xlsx');
 }
 
@@ -307,7 +309,24 @@ function buildWorkbook(tasks, settings, gridData) {
     }
   }
 
+  applyHiddenSheetFlags(wb);
+
   return wb;
+}
+
+// The Settings sheet stores internal app metadata (theme, view toggles,
+// gridCellStyles / gridShapes JSON blobs, native-format version markers,
+// tab list) that users should not see on the Excel tab strip. OOXML
+// `state="veryHidden"` keeps the sheet in the workbook so all round-trip
+// code (parseSettingsSheet, XlsxStyleExtractor, XlsxShapeExtractor) keeps
+// working, while making the tab invisible in Excel's UI - it can only be
+// surfaced via VBA, not via a right-click Unhide. See issue #36.
+function applyHiddenSheetFlags(wb) {
+  if (!wb || !Array.isArray(wb.SheetNames)) return;
+  wb.Workbook = wb.Workbook || {};
+  wb.Workbook.Sheets = wb.SheetNames.map((name) => ({
+    Hidden: name.toLowerCase() === 'settings' ? 2 : 0,
+  }));
 }
 
 /**
