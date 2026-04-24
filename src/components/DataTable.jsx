@@ -863,11 +863,20 @@ function EditableCell({ task, col, isParent, depth = 0, onUpdateTask, selected, 
   const nameEditIndent = col.key === 'name' && depth > 0
     ? { paddingLeft: NAME_CELL_BASE_PAD + depth * INDENT_PX }
     : null;
+  // Progress is the one numeric field users actively watch on the Gantt chart
+  // while they are typing it -- the percentage overlay on the bar is the
+  // primary feedback. Wire a live onChange so every keystroke flows into
+  // React state and the right-pane bar repaints immediately. Input stays
+  // uncontrolled (defaultValue) so React rerenders don't move the caret.
+  const liveCommit = col.key === 'progress'
+    ? (e) => commitValue(e.target.value)
+    : undefined;
   return (
     <input
       ref={inputRef}
       type={col.type === 'number' ? 'number' : 'text'}
       defaultValue={value ?? ''}
+      onChange={liveCommit}
       onBlur={(e) => commitAndStop(e.target.value)}
       onKeyDown={(e) => handleKeyDown(e, () => e.target.value)}
       className="w-full px-2 text-[13px] outline-none"
