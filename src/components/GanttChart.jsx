@@ -769,7 +769,7 @@ function TaskBar({ task, y, minDate, unitWidth, showCritical, showSlack, onUpdat
       )}
       {showTaskNames && (
         <text x={nameX} y={barY + BAR_HEIGHT / 2 + 3.5}
-          fill="var(--color-text-secondary)" fontSize={12} fontWeight={500}>
+          fill="var(--color-text-muted)" fontSize={12} fontWeight={500}>
           {task.name}
         </text>
       )}
@@ -815,7 +815,7 @@ function MilestoneDiamond({ task, y, minDate, unitWidth, showCritical, onUpdateT
       {selected && <circle cx={cx} cy={cy} r={size + 3} fill="none" stroke={color} strokeWidth={2} opacity={0.7} />}
       <polygon points={`${cx},${cy - size} ${cx + size},${cy} ${cx},${cy + size} ${cx - size},${cy}`} fill={color} opacity={0.9} />
       <rect x={cx - size} y={cy - size} width={size * 2} height={size * 2} fill="transparent" />
-      {showTaskNames && <text x={cx + size + 4} y={cy + 3.5} fill="var(--color-text-secondary)" fontSize={12} fontWeight={500}>{task.name}</text>}
+      {showTaskNames && <text x={cx + size + 4} y={cy + 3.5} fill="var(--color-text-muted)" fontSize={12} fontWeight={500}>{task.name}</text>}
     </g>
   );
 }
@@ -862,7 +862,7 @@ function SummaryBar({ task, y, minDate, unitWidth, showTaskNames, showProgressPe
       )}
       <rect x={x} y={barY} width={capWidth} height={SUMMARY_HEIGHT + 4} fill="var(--color-text-muted)" opacity={0.7} />
       <rect x={x + width - capWidth} y={barY} width={capWidth} height={SUMMARY_HEIGHT + 4} fill="var(--color-text-muted)" opacity={0.7} />
-      {showTaskNames && <text x={x + width + 4} y={barY + SUMMARY_HEIGHT / 2 + 3.5} fill="var(--color-text-muted)" fontSize={12} fontWeight={700}>{task.name}</text>}
+      {showTaskNames && <text x={x + width + 4} y={barY + SUMMARY_HEIGHT / 2 + 3.5} fill="var(--color-text-secondary)" fontSize={12} fontWeight={700}>{task.name}</text>}
     </g>
   );
 }
