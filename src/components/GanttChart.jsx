@@ -44,8 +44,12 @@ export default function GanttChart({ tasks, allTasks, viewOptions = {}, scrollTo
     progressPercent: toBool(viewOptions.showProgressPercent ?? true),
   };
 
-  const baseUnit = Math.max(4, Math.round(BASE_UNIT_AT_100 * effectiveZoom / 100));
-  const unitWidth = effectiveScale === 'day' ? baseUnit : Math.round(baseUnit * 0.56);
+  // Keep baseUnit as a float so zoom scales continuously at every integer percentage.
+  // Per-element minimums (TaskBar/SummaryBar/BaselineBar cap widths at >=4 px, MilestoneDiamond
+  // has a fixed 7 px radius, TodayLine has a fixed stroke) keep each rendered element readable
+  // even when unitWidth drops below 1 px at very low zoom.
+  const baseUnit = BASE_UNIT_AT_100 * effectiveZoom / 100;
+  const unitWidth = effectiveScale === 'day' ? baseUnit : baseUnit * 0.56;
 
   const { minDate, totalDays } = useMemo(() => {
     const src = allTasks?.length > 0 ? allTasks : tasks;
