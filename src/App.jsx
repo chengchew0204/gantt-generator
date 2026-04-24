@@ -1028,7 +1028,18 @@ export default function App() {
       return;
     }
 
-    const base64Data = exportExcelToBase64(enrichedTasks, settings, gridData);
+    let base64Data;
+    try {
+      base64Data = exportExcelToBase64(enrichedTasks, settings, gridData);
+    } catch (err) {
+      console.error('Share failed:', err);
+      setImportError(
+        err && err.message
+          ? err.message
+          : 'Share failed. Please check the console for details.',
+      );
+      return;
+    }
 
     // Reconstruct the HTML from the live DOM's <head> (which retains the original inlined
     // <script> and <style> blocks untouched by React) and a clean <body> with an empty #root.
@@ -1099,7 +1110,17 @@ export default function App() {
 
   const handleExport = useCallback(() => {
     const filename = 'GanttGen-' + (projectName.trim() || 'Project').replace(/[^\w\s-]/g, '') + '.xlsx';
-    exportExcel(enrichedTasks, settings, filename, gridData);
+    try {
+      exportExcel(enrichedTasks, settings, filename, gridData);
+    } catch (err) {
+      console.error('Save to Excel failed:', err);
+      setImportError(
+        err && err.message
+          ? err.message
+          : 'Save to Excel failed. Please check the console for details.',
+      );
+      return;
+    }
     setLastSavedAt(new Date());
     setIsDirty(false);
     isDirtyRef.current = false;

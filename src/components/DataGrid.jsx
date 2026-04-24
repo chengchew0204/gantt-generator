@@ -87,6 +87,30 @@ function borderSideToCss(b) {
   }
 }
 
+// Rank used to resolve which cell paints a seam shared with a neighbour.
+// Each shared edge is drawn exactly once so two adjacent 1px borders never
+// stack into a visible 2px line. Higher rank wins; ties break toward the
+// above / left cell (the one that owns the default grid line by convention).
+//   0 = no explicit border (default grid)
+//   2 = thin / dashed / dotted
+//   3 = medium
+//   4 = thick / double
+function borderSideRank(b) {
+  if (!b || !b.style || b.style === 'none') return 0;
+  switch (b.style) {
+    case 'thick':
+    case 'double':
+      return 4;
+    case 'medium':
+      return 3;
+    case 'thin':
+    case 'dashed':
+    case 'dotted':
+    default:
+      return 2;
+  }
+}
+
 const B_THIN = { style: 'thin' };
 const B_THICK = { style: 'thick' };
 const B_DOUBLE = { style: 'double' };
@@ -1705,13 +1729,50 @@ export default function DataGrid({ data, onChange, zoomPct = 100 }) {
                   const cellBorders = cellData?.s?.borders;
                   const highlightColor = refHighlights[key];
 
-                  const aboveBottom = ri > 0 ? cells[cellKey(ri - 1, ci)]?.s?.borders?.bottom : null;
-                  const leftRight = ci > 0 ? cells[cellKey(ri, ci - 1)]?.s?.borders?.right : null;
+                  // Border resolution per shared seam:
+                  //   - Horizontal seam between (r, c) and (r+1, c): both
+                  //     the cell-above's bottom and the cell-below's top can
+                  //     claim it. Pick the higher-rank side and paint it once,
+                  //     on the above cell's borderBottom. Ties prefer above.
+                  //   - Vertical seam between (r, c) and (r, c+1): same, with
+                  //     left cell's borderRight painting the shared edge.
+                  //
+                  // Painting on a single side avoids the "abutting 1px lines
+                  // stack to 2px" artefact (issue reported after pasting a
+                  // styled range from Excel), and the rank comparison fixes
+                  // the complementary "thicker border lost because the thinner
+                  // neighbour took precedence" artefact where a cell's explicit
+                  // medium / thick border next to a default thin grid line
+                  // would silently disappear.
+                  const ownBottom = cellBorders?.bottom || null;
+                  const belowTop = ri + 1 < rows ? (cells[cellKey(ri + 1, ci)]?.s?.borders?.top || null) : null;
+                  const bottomWinner = borderSideRank(ownBottom) >= borderSideRank(belowTop) ? ownBottom : null;
+                  const effBottom = bottomWinner
+                    ? borderSideToCss(bottomWinner)
+                    : (belowTop ? 'none' : borderStyle);
 
-                  const effBottom = borderSideToCss(cellBorders?.bottom) || borderStyle;
-                  const effRight = borderSideToCss(cellBorders?.right) || borderStyle;
-                  const effTop = cellBorders?.top && !aboveBottom ? borderSideToCss(cellBorders.top) : undefined;
-                  const effLeft = cellBorders?.left && !leftRight ? borderSideToCss(cellBorders.left) : undefined;
+                  const ownRight = cellBorders?.right || null;
+                  const rightCellLeft = ci + 1 < cols ? (cells[cellKey(ri, ci + 1)]?.s?.borders?.left || null) : null;
+                  const rightWinner = borderSideRank(ownRight) >= borderSideRank(rightCellLeft) ? ownRight : null;
+                  const effRight = rightWinner
+                    ? borderSideToCss(rightWinner)
+                    : (rightCellLeft ? 'none' : borderStyle);
+
+                  // Top / left sides: only paint when the paired edge on
+                  // the above / left neighbour cannot already handle it.
+                  // This happens at the top / left of the sheet, at the
+                  // top / left of a block adjacent to a cell with no
+                  // explicit bottom / right, and when our rank beats the
+                  // neighbour's bottom / right so that side went blank.
+                  const ownTop = cellBorders?.top || null;
+                  const aboveBottom = ri > 0 ? (cells[cellKey(ri - 1, ci)]?.s?.borders?.bottom || null) : null;
+                  const topWinner = borderSideRank(ownTop) > borderSideRank(aboveBottom) ? ownTop : null;
+                  const effTop = topWinner ? borderSideToCss(topWinner) : undefined;
+
+                  const ownLeft = cellBorders?.left || null;
+                  const leftCellRight = ci > 0 ? (cells[cellKey(ri, ci - 1)]?.s?.borders?.right || null) : null;
+                  const leftWinner = borderSideRank(ownLeft) > borderSideRank(leftCellRight) ? ownLeft : null;
+                  const effLeft = leftWinner ? borderSideToCss(leftWinner) : undefined;
 
                   let outlineStyle = 'none';
                   let outlineColor;
@@ -1819,46 +1880,90 @@ export default function DataGrid({ data, onChange, zoomPct = 100 }) {
             const cornerBL = cells[cellKey(m.r2, m.c1)];
             const cornerBR = cells[cellKey(m.r2, m.c2)];
 
-            // Merge overlay top/left abut painters that already own the
-            // 1px grid line (cell-above's borderBottom, cell-left's
-            // borderRight, or the header row/column at the boundary).
-            // Adding a fallback here would stack to ~2px and, via
-            // box-sizing: border-box, push merge content 1px down/right
-            // (issue #26). Mirror the per-cell pattern: only render top/
-            // left when the anchor has an explicit border AND no neighbour
-            // in the abutting row/column has an explicit conflicting one.
-            // Right/bottom keep their fallback chain because neighbours
-            // do not draw left/top borders by default.
-            let aboveExplicitBottom = false;
+            // Rank-based seam resolution (same model used for per-cell
+            // borders above). Each shared edge between the merge and its
+            // neighbours is drawn once, by whichever side has the higher
+            // rank. The merge's "own" side comes from the merge anchor for
+            // top / left, and from the opposite corner (cornerTR / BR / BL
+            // / BR) for right / bottom - these are the cells OOXML stores
+            // the border on for a merged range.
+            const ownTopM = aB?.top || null;
+            const ownLeftM = aB?.left || null;
+            const ownRightM = aB?.right
+              || cornerTR?.s?.borders?.right
+              || cornerBR?.s?.borders?.right
+              || null;
+            const ownBottomM = aB?.bottom
+              || cornerBL?.s?.borders?.bottom
+              || cornerBR?.s?.borders?.bottom
+              || null;
+
+            // Above-row's strongest bottom border across the merge width.
+            let aboveBottomRank = 0;
+            let aboveBottomSide = null;
             if (m.r1 > 0) {
               for (let c = m.c1; c <= m.c2; c++) {
-                if (cells[cellKey(m.r1 - 1, c)]?.s?.borders?.bottom) {
-                  aboveExplicitBottom = true;
-                  break;
-                }
+                const b = cells[cellKey(m.r1 - 1, c)]?.s?.borders?.bottom;
+                const r = borderSideRank(b);
+                if (r > aboveBottomRank) { aboveBottomRank = r; aboveBottomSide = b; }
               }
             }
-            let leftExplicitRight = false;
+            // Left-col's strongest right border down the merge height.
+            let leftRightRank = 0;
+            let leftRightSide = null;
             if (m.c1 > 0) {
               for (let r = m.r1; r <= m.r2; r++) {
-                if (cells[cellKey(r, m.c1 - 1)]?.s?.borders?.right) {
-                  leftExplicitRight = true;
-                  break;
-                }
+                const b = cells[cellKey(r, m.c1 - 1)]?.s?.borders?.right;
+                const rnk = borderSideRank(b);
+                if (rnk > leftRightRank) { leftRightRank = rnk; leftRightSide = b; }
               }
             }
-            const effTop = aB?.top && !aboveExplicitBottom ? borderSideToCss(aB.top) : undefined;
-            const effLeft = aB?.left && !leftExplicitRight ? borderSideToCss(aB.left) : undefined;
-            const effRight =
-              borderSideToCss(aB?.right) ||
-              borderSideToCss(cornerTR?.s?.borders?.right) ||
-              borderSideToCss(cornerBR?.s?.borders?.right) ||
-              borderStyle;
-            const effBottom =
-              borderSideToCss(aB?.bottom) ||
-              borderSideToCss(cornerBL?.s?.borders?.bottom) ||
-              borderSideToCss(cornerBR?.s?.borders?.bottom) ||
-              borderStyle;
+            // Below-row's strongest top border across the merge width.
+            let belowTopRank = 0;
+            let belowTopSide = null;
+            if (m.r2 + 1 < rows) {
+              for (let c = m.c1; c <= m.c2; c++) {
+                const b = cells[cellKey(m.r2 + 1, c)]?.s?.borders?.top;
+                const r = borderSideRank(b);
+                if (r > belowTopRank) { belowTopRank = r; belowTopSide = b; }
+              }
+            }
+            // Right-col's strongest left border down the merge height.
+            let rightLeftRank = 0;
+            let rightLeftSide = null;
+            if (m.c2 + 1 < cols) {
+              for (let r = m.r1; r <= m.r2; r++) {
+                const b = cells[cellKey(r, m.c2 + 1)]?.s?.borders?.left;
+                const rnk = borderSideRank(b);
+                if (rnk > rightLeftRank) { rightLeftRank = rnk; rightLeftSide = b; }
+              }
+            }
+
+            // Top / left: paint only when the merge beats the above /
+            // left neighbour (strict >, since by convention the above /
+            // left side already paints ties via its own bottom / right).
+            const topWinnerM = borderSideRank(ownTopM) > aboveBottomRank ? ownTopM : null;
+            const leftWinnerM = borderSideRank(ownLeftM) > leftRightRank ? ownLeftM : null;
+            const effTop = topWinnerM ? borderSideToCss(topWinnerM) : undefined;
+            const effLeft = leftWinnerM ? borderSideToCss(leftWinnerM) : undefined;
+
+            // Bottom / right: merge paints the shared seam (ties go to
+            // the merge so the default grid underneath is covered); if
+            // the neighbour's border outranks the merge's, suppress so
+            // the neighbour's top / left (painted on its own side in the
+            // per-cell block above) wins instead.
+            const bottomWinnerM = borderSideRank(ownBottomM) >= belowTopRank ? ownBottomM : null;
+            const rightWinnerM = borderSideRank(ownRightM) >= rightLeftRank ? ownRightM : null;
+            const effBottom = bottomWinnerM
+              ? borderSideToCss(bottomWinnerM)
+              : (belowTopSide ? 'none' : borderStyle);
+            const effRight = rightWinnerM
+              ? borderSideToCss(rightWinnerM)
+              : (rightLeftSide ? 'none' : borderStyle);
+            // aboveBottomSide / leftRightSide are read only for rank lookup
+            // above; reference them explicitly so static analysis does not
+            // flag the locals as unused.
+            void aboveBottomSide; void leftRightSide;
 
             const isAnchor = selectedCell && selectedCell.row === m.r1 && selectedCell.col === m.c1;
             const isEditing = editingCell && editingCell.row === m.r1 && editingCell.col === m.c1;

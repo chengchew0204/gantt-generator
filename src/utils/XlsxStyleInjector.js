@@ -40,6 +40,33 @@ const NUM_FMT_VALID = new Set([
   'text',
 ]);
 
+// App-side border style -> OOXML <border> style attribute. The app uses
+// thin/medium/thick/double/dashed/dotted; OOXML uses the same names plus
+// a handful we do not emit (hair, mediumDashed, slantDashDot, ...).
+const BORDER_STYLE_TO_OOXML = {
+  thin: 'thin',
+  medium: 'medium',
+  thick: 'thick',
+  double: 'double',
+  dashed: 'dashed',
+  dotted: 'dotted',
+};
+
+function normalizeHexColor(v) {
+  if (typeof v !== 'string') return null;
+  const m = /^#?([0-9a-fA-F]{6})$/.exec(v.trim());
+  if (!m) return null;
+  return m[1].toUpperCase();
+}
+
+function normalizeBorderSide(b) {
+  if (!b || !b.style || !BORDER_STYLE_TO_OOXML[b.style]) return null;
+  const out = { style: b.style };
+  const color = normalizeHexColor(b.color);
+  if (color) out.color = color;
+  return out;
+}
+
 // Excel reserves numFmtIds below 164 for built-ins. Custom entries must
 // start at 164 per the OOXML spec.
 const CUSTOM_NUM_FMT_START = 164;
@@ -65,13 +92,28 @@ function normalizeStyle(raw) {
       out.negativeStyle = raw.negativeStyle;
     }
   }
+  const color = normalizeHexColor(raw.color);
+  if (color) out.color = color;
+  const bg = normalizeHexColor(raw.bg);
+  if (bg) out.bg = bg;
+  if (raw.borders && typeof raw.borders === 'object') {
+    const b = {};
+    for (const side of ['top', 'right', 'bottom', 'left']) {
+      const norm = normalizeBorderSide(raw.borders[side]);
+      if (norm) b[side] = norm;
+    }
+    if (Object.keys(b).length > 0) out.borders = b;
+  }
   if (
     !out.bold &&
     !out.italic &&
     !out.underline &&
     !out.hAlign &&
     !out.vAlign &&
-    !out.numFmt
+    !out.numFmt &&
+    !out.color &&
+    !out.bg &&
+    !out.borders
   ) {
     return null;
   }
@@ -79,11 +121,11 @@ function normalizeStyle(raw) {
 }
 
 function fontKey(s) {
-  return `${s.bold ? 'b' : ''}${s.italic ? 'i' : ''}${s.underline ? 'u' : ''}`;
+  return `${s.bold ? 'b' : ''}${s.italic ? 'i' : ''}${s.underline ? 'u' : ''}|${s.color || ''}`;
 }
 
 function hasFontStyle(s) {
-  return !!(s.bold || s.italic || s.underline);
+  return !!(s.bold || s.italic || s.underline || s.color);
 }
 
 function alignKey(s) {
@@ -94,8 +136,33 @@ function hasAlignment(s) {
   return !!(s.hAlign || s.vAlign);
 }
 
-function xfKey(s, fontId, numFmtId) {
-  return `n${numFmtId}|f${fontId}|${alignKey(s)}`;
+function borderKey(s) {
+  if (!s.borders) return '';
+  const parts = [];
+  for (const side of ['top', 'right', 'bottom', 'left']) {
+    const b = s.borders[side];
+    if (!b) { parts.push(''); continue; }
+    parts.push(`${b.style}:${b.color || ''}`);
+  }
+  return parts.join('|');
+}
+
+function xfKey(s, fontId, numFmtId, fillId, borderId) {
+  return `n${numFmtId}|f${fontId}|fill${fillId}|bd${borderId}|${alignKey(s)}`;
+}
+
+// Replace / inject the first <color .../> element in the cloned default
+// font's inner XML so bold/italic/underline variants that also carry an
+// explicit color emit a single consistent <color rgb="..."/>. The default
+// font Excel writes references theme="1" (black); leaving that in place
+// alongside a new <color rgb="..."/> would make Excel treat the font as
+// multi-color, which is not valid.
+function applyFontColorInner(defaultInner, colorHex) {
+  const tag = `<color rgb="FF${colorHex}"/>`;
+  if (/<color\b[^/>]*\/?>/.test(defaultInner)) {
+    return defaultInner.replace(/<color\b[^/>]*\/?>/, tag);
+  }
+  return defaultInner + tag;
 }
 
 function buildFontEntry(defaultInner, s) {
@@ -103,7 +170,34 @@ function buildFontEntry(defaultInner, s) {
   if (s.bold) markers.push('<b/>');
   if (s.italic) markers.push('<i/>');
   if (s.underline) markers.push('<u/>');
-  return `<font>${markers.join('')}${defaultInner}</font>`;
+  const inner = s.color ? applyFontColorInner(defaultInner, s.color) : defaultInner;
+  return `<font>${markers.join('')}${inner}</font>`;
+}
+
+function buildFillEntry(bgHex) {
+  // OOXML pattern fill with a solid fgColor (Excel's "Fill Color" button
+  // writes <patternFill patternType="solid"><fgColor rgb="..."/></patternFill>).
+  // Alpha channel prefix FF makes the color fully opaque.
+  return `<fill><patternFill patternType="solid"><fgColor rgb="FF${bgHex}"/><bgColor indexed="64"/></patternFill></fill>`;
+}
+
+function buildBorderEntry(borders) {
+  const sideXml = (name, b) => {
+    if (!b) return `<${name}/>`;
+    const style = BORDER_STYLE_TO_OOXML[b.style] || 'thin';
+    const color = b.color ? `<color rgb="FF${b.color}"/>` : '<color indexed="64"/>';
+    return `<${name} style="${style}">${color}</${name}>`;
+  };
+  // OOXML mandates this child order: left, right, top, bottom, diagonal.
+  return (
+    '<border>' +
+    sideXml('left', borders.left) +
+    sideXml('right', borders.right) +
+    sideXml('top', borders.top) +
+    sideXml('bottom', borders.bottom) +
+    '<diagonal/>' +
+    '</border>'
+  );
 }
 
 function escapeXmlAttr(value) {
@@ -118,19 +212,23 @@ function buildNumFmtEntry(id, code) {
   return `<numFmt numFmtId="${id}" formatCode="${escapeXmlAttr(code)}"/>`;
 }
 
-function buildXfEntry(s, fontId, numFmtId) {
+function buildXfEntry(s, fontId, numFmtId, fillId, borderId) {
   const applyFont = fontId > 0;
   const applyAlign = hasAlignment(s);
   const applyNum = numFmtId > 0;
+  const applyFill = fillId > 0;
+  const applyBorder = borderId > 0;
   const attrs = [
     `numFmtId="${numFmtId}"`,
     `fontId="${fontId}"`,
-    'fillId="0"',
-    'borderId="0"',
+    `fillId="${fillId}"`,
+    `borderId="${borderId}"`,
     'xfId="0"',
   ];
   if (applyNum) attrs.push('applyNumberFormat="1"');
   if (applyFont) attrs.push('applyFont="1"');
+  if (applyFill) attrs.push('applyFill="1"');
+  if (applyBorder) attrs.push('applyBorder="1"');
   if (applyAlign) attrs.push('applyAlignment="1"');
   const open = `<xf ${attrs.join(' ')}`;
   if (!applyAlign) return `${open}/>`;
@@ -315,6 +413,10 @@ export function injectCellStyles(xlsxBytes, sheetStyles) {
 
   const currentXfCount = parseInt(cellXfsMatch[1], 10);
   const currentFontCount = parseInt(fontsMatch[1], 10);
+  const fillsMatch = stylesXml.match(/<fills\b[^>]*count="(\d+)"[^>]*>/);
+  const bordersMatch = stylesXml.match(/<borders\b[^>]*count="(\d+)"[^>]*>/);
+  const currentFillCount = fillsMatch ? parseInt(fillsMatch[1], 10) : 0;
+  const currentBorderCount = bordersMatch ? parseInt(bordersMatch[1], 10) : 0;
   const defaultFontInner = extractDefaultFontInner(stylesXml);
 
   // numFmt dedup: resolve the style's format code via NumberFormat. Built-in
@@ -342,8 +444,8 @@ export function injectCellStyles(xlsxBytes, sheetStyles) {
     return id;
   }
 
-  // Font dedup: one entry per unique (bold, italic, underline) combination.
-  // The all-false combination reuses fontId 0 (existing default).
+  // Font dedup: one entry per unique (bold, italic, underline, color)
+  // combination. The all-default combination reuses fontId 0.
   const fontRegistry = new Map();
   const newFontChunks = [];
   let nextFontId = currentFontCount;
@@ -357,21 +459,57 @@ export function injectCellStyles(xlsxBytes, sheetStyles) {
     return id;
   }
 
-  // XF dedup: one entry per unique (numFmtId, fontId, hAlign, vAlign).
-  // Cells mapping to xfId 0 (no font style, no alignment, no number
-  // format) need no patching, but we already filtered those out via
-  // normalizeStyle.
+  // Fill dedup: one <fill> entry per unique solid colour. OOXML reserves
+  // fillIds 0 and 1 for the `none` and `gray125` placeholders that every
+  // xlsx must emit, so the first user fill lands at index currentFillCount
+  // (which will be >= 2 for any workbook SheetJS writes).
+  const fillRegistry = new Map();
+  const newFillChunks = [];
+  let nextFillId = currentFillCount;
+  function resolveFillId(style) {
+    if (!style.bg) return 0;
+    const k = style.bg;
+    if (fillRegistry.has(k)) return fillRegistry.get(k);
+    const id = nextFillId++;
+    fillRegistry.set(k, id);
+    newFillChunks.push(buildFillEntry(style.bg));
+    return id;
+  }
+
+  // Border dedup: one <border> entry per unique four-side combination.
+  // OOXML reserves borderId 0 for the "no borders" placeholder; we never
+  // touch that entry.
+  const borderRegistry = new Map();
+  const newBorderChunks = [];
+  let nextBorderId = currentBorderCount;
+  function resolveBorderId(style) {
+    if (!style.borders) return 0;
+    const k = borderKey(style);
+    if (!k) return 0;
+    if (borderRegistry.has(k)) return borderRegistry.get(k);
+    const id = nextBorderId++;
+    borderRegistry.set(k, id);
+    newBorderChunks.push(buildBorderEntry(style.borders));
+    return id;
+  }
+
+  // XF dedup: one entry per unique (numFmtId, fontId, fillId, borderId,
+  // hAlign, vAlign). Cells mapping to xfId 0 (no font style, no alignment,
+  // no number format, no fill, no border) need no patching, but we
+  // already filtered those out via normalizeStyle.
   const xfRegistry = new Map();
   const newXfChunks = [];
   let nextXfId = currentXfCount;
   function resolveXfId(style) {
     const nfid = resolveNumFmtId(style);
     const fid = resolveFontId(style);
-    const k = xfKey(style, fid, nfid);
+    const fillId = resolveFillId(style);
+    const borderId = resolveBorderId(style);
+    const k = xfKey(style, fid, nfid, fillId, borderId);
     if (xfRegistry.has(k)) return xfRegistry.get(k);
     const id = nextXfId++;
     xfRegistry.set(k, id);
-    newXfChunks.push(buildXfEntry(style, fid, nfid));
+    newXfChunks.push(buildXfEntry(style, fid, nfid, fillId, borderId));
     return id;
   }
 
@@ -421,6 +559,51 @@ export function injectCellStyles(xlsxBytes, sheetStyles) {
       /<fonts\b[^>]*count="\d+"[^>]*>([\s\S]*?)<\/fonts>/,
       (_m, inner) => `<fonts count="${newFontCount}">${inner}${newFontChunks.join('')}</fonts>`,
     );
+  }
+
+  if (newFillChunks.length > 0) {
+    const newFillCount = currentFillCount + newFillChunks.length;
+    if (fillsMatch) {
+      stylesXml = stylesXml.replace(
+        /<fills\b[^>]*count="\d+"[^>]*>([\s\S]*?)<\/fills>/,
+        (_m, inner) => `<fills count="${newFillCount}">${inner}${newFillChunks.join('')}</fills>`,
+      );
+    } else {
+      // No <fills> block yet (rare: SheetJS normally emits one). Create
+      // one with the required gray125/none placeholders at indices 0/1
+      // so our user fills start at index 2 as assumed by the registry.
+      const placeholder =
+        '<fill><patternFill patternType="none"/></fill>' +
+        '<fill><patternFill patternType="gray125"/></fill>';
+      const block = `<fills count="${2 + newFillChunks.length}">${placeholder}${newFillChunks.join('')}</fills>`;
+      // Insert just after </fonts> if present; otherwise right before <cellXfs>.
+      if (/<\/fonts>/.test(stylesXml)) {
+        stylesXml = stylesXml.replace('</fonts>', `</fonts>${block}`);
+      } else {
+        stylesXml = stylesXml.replace(/<cellXfs\b/, `${block}<cellXfs`);
+      }
+    }
+  }
+
+  if (newBorderChunks.length > 0) {
+    const newBorderCount = currentBorderCount + newBorderChunks.length;
+    if (bordersMatch) {
+      stylesXml = stylesXml.replace(
+        /<borders\b[^>]*count="\d+"[^>]*>([\s\S]*?)<\/borders>/,
+        (_m, inner) => `<borders count="${newBorderCount}">${inner}${newBorderChunks.join('')}</borders>`,
+      );
+    } else {
+      // No <borders> block yet. OOXML requires borderId 0 to be a default
+      // empty border; emit that placeholder before the user borders so
+      // cell references align with the registry's borderId allocation.
+      const placeholder = '<border><left/><right/><top/><bottom/><diagonal/></border>';
+      const block = `<borders count="${1 + newBorderChunks.length}">${placeholder}${newBorderChunks.join('')}</borders>`;
+      if (/<\/fills>/.test(stylesXml)) {
+        stylesXml = stylesXml.replace('</fills>', `</fills>${block}`);
+      } else {
+        stylesXml = stylesXml.replace(/<cellXfs\b/, `${block}<cellXfs`);
+      }
+    }
   }
 
   const newXfCount = currentXfCount + newXfChunks.length;

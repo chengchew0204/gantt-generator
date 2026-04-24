@@ -185,6 +185,59 @@ function parseFills(stylesXml) {
   return fills;
 }
 
+// OOXML border style names GanttGen round-trips natively. The extractor
+// is deliberately narrow: unknown / exotic styles (hair, mediumDashDot,
+// slantDashDot, ...) fall back to "thin" so the user still sees *a* line
+// rather than having the border vanish.
+const OOXML_TO_APP_BORDER_STYLE = {
+  thin: 'thin',
+  medium: 'medium',
+  thick: 'thick',
+  double: 'double',
+  dashed: 'dashed',
+  dotted: 'dotted',
+};
+
+function parseBorderSide(sideXml) {
+  if (!sideXml) return null;
+  const styleMatch = sideXml.match(/\bstyle="([^"]+)"/);
+  if (!styleMatch) return null;
+  const raw = styleMatch[1];
+  const mapped = OOXML_TO_APP_BORDER_STYLE[raw] || 'thin';
+  const out = { style: mapped };
+  const colorEl = sideXml.match(/<color\b([^/>]*)\/?>/);
+  if (colorEl) {
+    const color = parseOoxmlColor(colorEl[1]);
+    if (color) out.color = color;
+  }
+  return out;
+}
+
+function parseBorders(stylesXml) {
+  const bordersBlock = stylesXml.match(/<borders\b[^>]*>([\s\S]*?)<\/borders>/);
+  if (!bordersBlock) return [];
+  const inner = bordersBlock[1];
+  const borders = [];
+  // Use [^<]*? with a lookahead so a missing side element (left/right/...)
+  // does not swallow the next <border> block's opening tag.
+  const borderRegex = /<border\b[^>]*>([\s\S]*?)<\/border>/g;
+  let m;
+  while ((m = borderRegex.exec(inner)) !== null) {
+    const body = m[1];
+    const out = {};
+    for (const side of ['left', 'right', 'top', 'bottom']) {
+      const sideMatch = body.match(new RegExp(`<${side}\\b([^/>]*)(?:\\/>|>([\\s\\S]*?)<\\/${side}>)`));
+      if (!sideMatch) continue;
+      const attrs = sideMatch[1] || '';
+      const sideBody = sideMatch[2] || '';
+      const parsed = parseBorderSide(`<${side}${attrs}>${sideBody}</${side}>`);
+      if (parsed) out[side] = parsed;
+    }
+    borders.push(Object.keys(out).length > 0 ? out : null);
+  }
+  return borders;
+}
+
 function parseCellXfs(stylesXml) {
   const xfsBlock = stylesXml.match(/<cellXfs\b[^>]*>([\s\S]*?)<\/cellXfs>/);
   if (!xfsBlock) return [];
@@ -198,9 +251,11 @@ function parseCellXfs(stylesXml) {
     const body = m[2] || '';
     const fontIdMatch = attrs.match(/\bfontId="(\d+)"/);
     const fillIdMatch = attrs.match(/\bfillId="(\d+)"/);
+    const borderIdMatch = attrs.match(/\bborderId="(\d+)"/);
     const numFmtIdMatch = attrs.match(/\bnumFmtId="(\d+)"/);
     const applyFontAttr = attrs.match(/\bapplyFont="([^"]+)"/);
     const applyFillAttr = attrs.match(/\bapplyFill="([^"]+)"/);
+    const applyBorderAttr = attrs.match(/\bapplyBorder="([^"]+)"/);
     const applyNumberFormatAttr = attrs.match(/\bapplyNumberFormat="([^"]+)"/);
     const applyAlignAttr = attrs.match(/\bapplyAlignment="([^"]+)"/);
     const alignEl = body.match(/<alignment\b([^>]*)\/?>/);
@@ -216,9 +271,11 @@ function parseCellXfs(stylesXml) {
     xfs.push({
       fontId: fontIdMatch ? parseInt(fontIdMatch[1], 10) : 0,
       fillId: fillIdMatch ? parseInt(fillIdMatch[1], 10) : 0,
+      borderId: borderIdMatch ? parseInt(borderIdMatch[1], 10) : 0,
       numFmtId: numFmtIdMatch ? parseInt(numFmtIdMatch[1], 10) : 0,
       applyFont: applyFontAttr ? applyFontAttr[1] : undefined,
       applyFill: applyFillAttr ? applyFillAttr[1] : undefined,
+      applyBorder: applyBorderAttr ? applyBorderAttr[1] : undefined,
       applyNumberFormat: applyNumberFormatAttr ? applyNumberFormatAttr[1] : undefined,
       applyAlignment: applyAlignAttr ? applyAlignAttr[1] : undefined,
       hasAlignmentElement,
@@ -229,7 +286,7 @@ function parseCellXfs(stylesXml) {
   return xfs;
 }
 
-function resolveXfStyle(xf, fonts, fills, numFmts) {
+function resolveXfStyle(xf, fonts, fills, borders, numFmts) {
   const out = {};
   // Number format: xf 0 always references numFmtId 0 (General) so default
   // cells correctly emit no numFmt field. applyNumberFormat mirrors the
@@ -271,6 +328,14 @@ function resolveXfStyle(xf, fonts, fills, numFmts) {
   const applyFill = xf.applyFill !== '0' && xf.applyFill !== 'false';
   const fill = fills ? fills[xf.fillId] : null;
   if (applyFill && fill && fill.color) out.bg = fill.color;
+  // Borders: same applyBorder convention as applyFill. borders[0] is
+  // the OOXML placeholder for "no borders"; anything else is a real
+  // cell border.
+  const applyBorder = xf.applyBorder !== '0' && xf.applyBorder !== 'false';
+  const border = borders && xf.borderId > 0 ? borders[xf.borderId] : null;
+  if (applyBorder && border && Object.keys(border).length > 0) {
+    out.borders = border;
+  }
   const applyAlignment = xf.applyAlignment !== '0' && xf.applyAlignment !== 'false';
   const applyAlignmentExplicit = xf.applyAlignment === '1' || xf.applyAlignment === 'true';
   if (applyAlignment) {
@@ -365,9 +430,10 @@ export function extractNativeCellStyles(xlsxBytes) {
     const stylesXml = strFromU8(unzipped['xl/styles.xml']);
     const fonts = parseFonts(stylesXml);
     const fills = parseFills(stylesXml);
+    const borders = parseBorders(stylesXml);
     const numFmts = parseNumFmts(stylesXml);
     const xfs = parseCellXfs(stylesXml);
-    const xfStyles = xfs.map((xf) => resolveXfStyle(xf, fonts, fills, numFmts));
+    const xfStyles = xfs.map((xf) => resolveXfStyle(xf, fonts, fills, borders, numFmts));
 
     const workbookXml = unzipped['xl/workbook.xml']
       ? strFromU8(unzipped['xl/workbook.xml']) : '';
