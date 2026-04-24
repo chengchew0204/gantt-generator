@@ -988,11 +988,18 @@ function parseGridSheets(
       }
     }
 
-    // Shapes: prefer native DrawingML when the file is tagged authoritative
-    // (v >= 1). Otherwise fall back to the JSON blob in the Settings sheet.
+    // Shapes: when the file is tagged authoritative (v >= 1), the native
+    // DrawingML is the single source of truth for every sheet - including
+    // sheets with zero shapes. Falling back to the JSON blob per-sheet
+    // re-materialises phantom shapes the user deleted in Excel, because
+    // Excel rewrites drawings but leaves the veryHidden Settings sheet
+    // (and its stale gridShapes entries) untouched. The JSON blob is
+    // only used for legacy files authored before native shapes existed.
     let shapesForTab = [];
-    if (nativeShapesAuthoritative && nativeSheetShapes[sheetName]) {
-      shapesForTab = nativeSheetShapes[sheetName];
+    if (nativeShapesAuthoritative) {
+      shapesForTab = Array.isArray(nativeSheetShapes[sheetName])
+        ? nativeSheetShapes[sheetName]
+        : [];
     } else if (Array.isArray(gridShapes[tab.id])) {
       shapesForTab = gridShapes[tab.id];
     }
