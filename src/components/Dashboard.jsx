@@ -272,7 +272,7 @@ function PngExportButton({ onExportPng }) {
         title="Export PNG"
       >
         <Image size={14} />
-        <span className="hidden sm:inline">Export PNG</span>
+        <span className="hidden xl:inline whitespace-nowrap">Export PNG</span>
         <ChevronDown size={10} style={{ marginLeft: 2, opacity: 0.6 }} />
       </button>
       {open && (
@@ -321,7 +321,7 @@ function ShareButton({ onShare }) {
       title="Download a web file you can share with anyone. Double-click to open in any modern browser -- no installation, works offline."
     >
       <Share2 size={14} />
-      <span className="hidden sm:inline">Share</span>
+      <span className="hidden xl:inline whitespace-nowrap">Share</span>
     </button>
   );
 }
@@ -386,7 +386,7 @@ function ActionButton({ icon: Icon, label, onClick, primary, guideAttr, disabled
       }}
     >
       <Icon size={14} />
-      <span className="hidden sm:inline">{label}</span>
+      <span className="hidden xl:inline whitespace-nowrap">{label}</span>
     </button>
   );
 }
