@@ -3,16 +3,83 @@ import { unzipSync, strFromU8 } from 'fflate';
 /*
  * Read native Excel cell styles directly from the xlsx byte stream. Exists
  * because SheetJS 0.20.3 Community does not surface font booleans
- * (bold / italic / underline) or alignment on its wsCell.s objects - the
- * same read-side Community limitation that motivated XlsxStyleInjector on
- * the write side.
+ * (bold / italic / underline), alignment, or colour on its wsCell.s objects
+ * - the same read-side Community limitation that motivated
+ * XlsxStyleInjector on the write side.
  *
  * The extractor is best-effort: any parse failure returns an empty map,
- * never throws. It only reports the subset of styles the app currently
- * understands (hAlign, vAlign, bold, italic, underline); other native
- * properties (font colour, fill, borders, font size) still round-trip
- * through GanttGen's gridCellStyles JSON blob in the Settings sheet.
+ * never throws. It reports the subset of styles the app currently
+ * understands: hAlign, vAlign, bold, italic, underline, text `color`,
+ * background `bg`. Other native properties (font size, borders) still
+ * round-trip only through GanttGen's gridCellStyles JSON blob in the
+ * Settings sheet.
  */
+
+// Legacy BIFF palette that OOXML still references via <color indexed="N"/>.
+// Values lifted from ECMA-376 Part 1, 18.8.27 (Indexed Colors). Entries 64
+// and 65 are reserved for "system foreground" and "system background" and
+// resolve to null (the app falls back to its own defaults).
+const INDEXED_PALETTE = [
+  '#000000', '#ffffff', '#ff0000', '#00ff00', '#0000ff', '#ffff00', '#ff00ff', '#00ffff',
+  '#000000', '#ffffff', '#ff0000', '#00ff00', '#0000ff', '#ffff00', '#ff00ff', '#00ffff',
+  '#800000', '#008000', '#000080', '#808000', '#800080', '#008080', '#c0c0c0', '#808080',
+  '#9999ff', '#993366', '#ffffcc', '#ccffff', '#660066', '#ff8080', '#0066cc', '#ccccff',
+  '#000080', '#ff00ff', '#ffff00', '#00ffff', '#800080', '#800000', '#008080', '#0000ff',
+  '#00ccff', '#ccffff', '#ccffcc', '#ffff99', '#99ccff', '#ff99cc', '#cc99ff', '#ffcc99',
+  '#3366ff', '#33cccc', '#99cc00', '#ffcc00', '#ff9900', '#ff6600', '#666699', '#969696',
+  '#003366', '#339966', '#003300', '#333300', '#993300', '#993366', '#333399', '#333333',
+];
+
+// Built-in fallback for theme colour references. Real Office themes live
+// in xl/theme/theme1.xml; parsing that plus the full tint algebra is out
+// of scope for v1. These cover the defaults the Office 2007 palette ships
+// with, which Excel writes whenever a user picks a colour from the "theme
+// colours" row (index 0-11) without changing the workbook theme.
+const THEME_FALLBACK = {
+  0: '#ffffff', // lt1 / bg1
+  1: '#000000', // dk1 / tx1
+  2: '#eeece1', // lt2 / bg2
+  3: '#1f497d', // dk2 / tx2
+  4: '#4f81bd', // accent1
+  5: '#c0504d', // accent2
+  6: '#9bbb59', // accent3
+  7: '#8064a2', // accent4
+  8: '#4bacc6', // accent5
+  9: '#f79646', // accent6
+  10: '#0000ff', // hlink
+  11: '#800080', // folHlink
+};
+
+// Parse the attribute blob of an OOXML <color .../> or <fgColor .../>
+// element. Accepts rgb="AARRGGBB" (alpha-prefixed, sometimes 6 hex when a
+// producer drops alpha), indexed="N", and theme="N". Returns a lowercase
+// "#rrggbb" string or null for "unset / transparent / auto".
+function parseOoxmlColor(attrs) {
+  if (!attrs) return null;
+  const autoMatch = attrs.match(/\bauto="(1|true)"/i);
+  if (autoMatch) return null;
+  const rgbMatch = attrs.match(/\brgb="([0-9a-fA-F]{6,8})"/);
+  if (rgbMatch) {
+    const hex = rgbMatch[1].toLowerCase();
+    if (hex.length === 8) {
+      const alpha = hex.slice(0, 2);
+      if (alpha === '00') return null;
+      return '#' + hex.slice(2);
+    }
+    return '#' + hex;
+  }
+  const indexedMatch = attrs.match(/\bindexed="(\d+)"/);
+  if (indexedMatch) {
+    const idx = parseInt(indexedMatch[1], 10);
+    return INDEXED_PALETTE[idx] || null;
+  }
+  const themeMatch = attrs.match(/\btheme="(\d+)"/);
+  if (themeMatch) {
+    const idx = parseInt(themeMatch[1], 10);
+    return THEME_FALLBACK[idx] || null;
+  }
+  return null;
+}
 
 function parseFonts(stylesXml) {
   const fontsBlock = stylesXml.match(/<fonts\b[^>]*>([\s\S]*?)<\/fonts>/);
@@ -28,13 +95,70 @@ function parseFonts(stylesXml) {
     // does not.
     const uMatch = fontInner.match(/<u\b([^/>]*)\/?>/);
     const underline = !!uMatch && !/val="none"/i.test(uMatch[1]);
+    // Font colour. Skip <color theme="1"/> without tint: that is Excel's
+    // default text colour (tx1 = black) and appears on every styled font
+    // the XlsxStyleInjector creates, so emitting '#000000' from it would
+    // pollute every bold / italic / underlined cell in a GanttGen-written
+    // file with an explicit black colour that the user never chose.
+    const colorElMatch = fontInner.match(/<color\b([^/>]*)\/?>/);
+    let color = null;
+    if (colorElMatch) {
+      const colorAttrs = colorElMatch[1];
+      const isDefaultText =
+        /\btheme="1"/.test(colorAttrs) && !/\btint="/.test(colorAttrs);
+      if (!isDefaultText) color = parseOoxmlColor(colorAttrs);
+    }
     fonts.push({
       bold: /<b\s*\/?>/.test(fontInner),
       italic: /<i\s*\/?>/.test(fontInner),
       underline,
+      color,
     });
   }
   return fonts;
+}
+
+// Visible-pattern fills contribute a bg colour. `none` and `gray125` are
+// the two required placeholders OOXML mandates at indices 0 and 1, plus
+// some files use other patterns (darkGray etc.) that semantically imply a
+// shaded background; we take the fgColor for any non-`none` pattern so
+// the user's visual intent survives.
+function parseFills(stylesXml) {
+  const fillsBlock = stylesXml.match(/<fills\b[^>]*>([\s\S]*?)<\/fills>/);
+  if (!fillsBlock) return [];
+  const inner = fillsBlock[1];
+  const fills = [];
+  // Match both the nested form `<fill><patternFill ...>...</patternFill></fill>`
+  // and any trailing gradientFill etc. A fill without a <patternFill> child
+  // contributes nothing; we still push an entry so fillId indices line up.
+  const fillRegex = /<fill\b[^>]*>([\s\S]*?)<\/fill>/g;
+  let m;
+  while ((m = fillRegex.exec(inner)) !== null) {
+    const fillInner = m[1];
+    const patternSelfClose = fillInner.match(/<patternFill\b([^/>]*)\/\s*>/);
+    const patternBlock = fillInner.match(/<patternFill\b([^>]*)>([\s\S]*?)<\/patternFill>/);
+    let attrs = '';
+    let body = '';
+    if (patternBlock) {
+      attrs = patternBlock[1];
+      body = patternBlock[2];
+    } else if (patternSelfClose) {
+      attrs = patternSelfClose[1];
+    } else {
+      fills.push({ color: null });
+      continue;
+    }
+    const typeMatch = attrs.match(/\bpatternType="([^"]+)"/);
+    const type = typeMatch ? typeMatch[1] : 'none';
+    if (type === 'none' || type === 'gray125') {
+      fills.push({ color: null });
+      continue;
+    }
+    const fgMatch = body.match(/<fgColor\b([^/>]*)\/?>/);
+    const color = fgMatch ? parseOoxmlColor(fgMatch[1]) : null;
+    fills.push({ color });
+  }
+  return fills;
 }
 
 function parseCellXfs(stylesXml) {
@@ -49,7 +173,9 @@ function parseCellXfs(stylesXml) {
     const attrs = m[1] || '';
     const body = m[2] || '';
     const fontIdMatch = attrs.match(/\bfontId="(\d+)"/);
+    const fillIdMatch = attrs.match(/\bfillId="(\d+)"/);
     const applyFontAttr = attrs.match(/\bapplyFont="([^"]+)"/);
+    const applyFillAttr = attrs.match(/\bapplyFill="([^"]+)"/);
     const applyAlignAttr = attrs.match(/\bapplyAlignment="([^"]+)"/);
     const alignEl = body.match(/<alignment\b([^>]*)\/?>/);
     let hAlign;
@@ -63,7 +189,9 @@ function parseCellXfs(stylesXml) {
     }
     xfs.push({
       fontId: fontIdMatch ? parseInt(fontIdMatch[1], 10) : 0,
+      fillId: fillIdMatch ? parseInt(fillIdMatch[1], 10) : 0,
       applyFont: applyFontAttr ? applyFontAttr[1] : undefined,
+      applyFill: applyFillAttr ? applyFillAttr[1] : undefined,
       applyAlignment: applyAlignAttr ? applyAlignAttr[1] : undefined,
       hasAlignmentElement,
       hAlign,
@@ -73,7 +201,7 @@ function parseCellXfs(stylesXml) {
   return xfs;
 }
 
-function resolveXfStyle(xf, fonts) {
+function resolveXfStyle(xf, fonts, fills) {
   const out = {};
   const font = fonts[xf.fontId] || null;
   // Treat applyFont as true by default. Excel explicitly opts out with
@@ -85,7 +213,14 @@ function resolveXfStyle(xf, fonts) {
     if (font.bold) out.bold = true;
     if (font.italic) out.italic = true;
     if (font.underline) out.underline = true;
+    if (font.color) out.color = font.color;
   }
+  // Fills: xf 0 always references fillId 0 (pattern "none") so default
+  // cells correctly emit no bg. Same applyFill opt-out convention as
+  // applyFont - absent means apply, "0"/"false" opt out.
+  const applyFill = xf.applyFill !== '0' && xf.applyFill !== 'false';
+  const fill = fills ? fills[xf.fillId] : null;
+  if (applyFill && fill && fill.color) out.bg = fill.color;
   const applyAlignment = xf.applyAlignment !== '0' && xf.applyAlignment !== 'false';
   const applyAlignmentExplicit = xf.applyAlignment === '1' || xf.applyAlignment === 'true';
   if (applyAlignment) {
@@ -166,6 +301,8 @@ function extractSheetCellStyles(sheetXml, xfStyles) {
  *   bold?: boolean,
  *   italic?: boolean,
  *   underline?: boolean,
+ *   color?: string,
+ *   bg?: string,
  * }>>} sheetName -> cellRef -> resolved native style (empty if nothing to report)
  */
 export function extractNativeCellStyles(xlsxBytes) {
@@ -177,8 +314,9 @@ export function extractNativeCellStyles(xlsxBytes) {
 
     const stylesXml = strFromU8(unzipped['xl/styles.xml']);
     const fonts = parseFonts(stylesXml);
+    const fills = parseFills(stylesXml);
     const xfs = parseCellXfs(stylesXml);
-    const xfStyles = xfs.map((xf) => resolveXfStyle(xf, fonts));
+    const xfStyles = xfs.map((xf) => resolveXfStyle(xf, fonts, fills));
 
     const workbookXml = unzipped['xl/workbook.xml']
       ? strFromU8(unzipped['xl/workbook.xml']) : '';
