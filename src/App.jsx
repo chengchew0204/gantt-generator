@@ -1087,8 +1087,10 @@ export default function App() {
       }
 
       const dataUrl = await toPng(target, opts);
+      const safeName = (projectName.trim() || 'Project').replace(/[^\w\s-]/g, '');
+      const suffix = mode === 'full' ? 'Full' : 'Chart';
       const link = document.createElement('a');
-      link.download = mode === 'full' ? 'GanttGen_Full.png' : 'GanttGen_Chart.png';
+      link.download = `GanttGen-${safeName}_${suffix}.png`;
       link.href = dataUrl;
       link.click();
     } catch (err) {
@@ -1096,7 +1098,7 @@ export default function App() {
     } finally {
       document.head.removeChild(scrollbarStyle);
     }
-  }, []);
+  }, [projectName]);
 
   const handleMouseDown = useCallback((e) => {
     e.preventDefault();
