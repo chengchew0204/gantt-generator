@@ -8,8 +8,19 @@ import { extractShapes } from './XlsxShapeExtractor';
 // changes. Files tagged with version >= 1 treat the native xlsx bytes as
 // authoritative for the keys listed in NATIVE_STYLE_KEYS; older files
 // fall back to the gridCellStyles JSON blob. See ADR 003.
-const NATIVE_CELL_STYLES_VERSION = '1';
-const NATIVE_STYLE_KEYS = ['hAlign', 'vAlign', 'bold', 'italic', 'underline'];
+const NATIVE_CELL_STYLES_VERSION = '2';
+const NATIVE_STYLE_KEYS = [
+  'hAlign',
+  'vAlign',
+  'bold',
+  'italic',
+  'underline',
+  'numFmt',
+  'decimals',
+  'currency',
+  'useThousands',
+  'negativeStyle',
+];
 
 // Mirror of NATIVE_CELL_STYLES_VERSION for the DrawingML shape codec.
 // Files tagged with version >= 1 treat the embedded DrawingML parts as
@@ -338,8 +349,9 @@ function applyHiddenSheetFlags(wb) {
  * round-trip via `gridCellStyles` is unaffected.
  *
  * Returns only the subset of `cell.s` that XlsxStyleInjector currently
- * knows how to write: horizontal / vertical alignment and the three font
- * toggles (bold, italic, underline).
+ * knows how to write: horizontal / vertical alignment, the three font
+ * toggles (bold, italic, underline), and the Excel-style number format
+ * fields (numFmt, decimals, currency, useThousands, negativeStyle).
  */
 function collectSheetStyles(settings, gridData) {
   if (!gridData) return {};
@@ -360,6 +372,13 @@ function collectSheetStyles(settings, gridData) {
       if (s.bold) picked.bold = true;
       if (s.italic) picked.italic = true;
       if (s.underline) picked.underline = true;
+      if (s.numFmt && s.numFmt !== 'general') picked.numFmt = s.numFmt;
+      if (typeof s.decimals === 'number') picked.decimals = s.decimals;
+      if (typeof s.currency === 'string' && s.currency) picked.currency = s.currency;
+      if (typeof s.useThousands === 'boolean') picked.useThousands = s.useThousands;
+      if (typeof s.negativeStyle === 'string' && s.negativeStyle) {
+        picked.negativeStyle = s.negativeStyle;
+      }
       if (Object.keys(picked).length === 0) continue;
       cellStyles[cellRef] = picked;
     }
