@@ -14,6 +14,14 @@ const ROW_HEIGHT = 32;
 const HEADER_HEIGHT = 34;
 const MIN_COL_WIDTH = 32;
 
+// WBS indentation: applied only to the Name cell so nested child tasks read
+// visually. 16 px per depth level matches MS Project / Smartsheet; guide
+// lines sit 7 px into each level so they align with the middle of the
+// previous indent step.
+const INDENT_PX = 16;
+const GUIDE_INSET = 7;
+const NAME_CELL_BASE_PAD = 8;
+
 const STATUS_OPTIONS = [
   'Not Started',
   'In Progress',
@@ -639,12 +647,26 @@ function TaskRow({
       {cols.map((col) => {
         const w = getColW(colWidths, col);
         const isCellEditing = editingCell && editingCell.rowIndex === index && editingCell.colKey === col.key;
+        const isNameCol = col.key === 'name';
+        const depth = Math.max(0, Number(task.depth) || 0);
         return (
-          <div key={col.key} className="flex-shrink-0 overflow-hidden" style={{ width: w, maxWidth: w }}>
+          <div
+            key={col.key}
+            className="flex-shrink-0 overflow-hidden"
+            style={{
+              width: w,
+              maxWidth: w,
+              position: isNameCol && depth > 0 ? 'relative' : undefined,
+            }}
+          >
+            {isNameCol && depth > 0 && (
+              <DepthGuides depth={depth} />
+            )}
             <EditableCell
               task={task}
               col={col}
               isParent={isParent}
+              depth={depth}
               onUpdateTask={onUpdateTask}
               selected={selected}
               datePickField={datePickField}
@@ -679,7 +701,7 @@ function TaskRow({
   );
 }
 
-function EditableCell({ task, col, isParent, onUpdateTask, selected, datePickField, onDatePickField, editing, onStartEditing, onStopEditing, onNavigate }) {
+function EditableCell({ task, col, isParent, depth = 0, onUpdateTask, selected, datePickField, onDatePickField, editing, onStartEditing, onStopEditing, onNavigate }) {
   const inputRef = useRef(null);
   const navigatingRef = useRef(false);
 
@@ -792,6 +814,9 @@ function EditableCell({ task, col, isParent, onUpdateTask, selected, datePickFie
   }
 
   if (!editing) {
+    const nameIndent = col.key === 'name' && depth > 0
+      ? { paddingLeft: NAME_CELL_BASE_PAD + depth * INDENT_PX }
+      : null;
     return (
       <button
         onClick={handleStartEditing}
@@ -801,6 +826,8 @@ function EditableCell({ task, col, isParent, onUpdateTask, selected, datePickFie
           fontWeight: col.key === 'name' && isParent ? 700 : col.key === 'name' ? 500 : 400,
           lineHeight: `${ROW_HEIGHT}px`,
           height: ROW_HEIGHT,
+          position: 'relative',
+          ...nameIndent,
         }}
         title={String(value || '')}
       >
@@ -833,6 +860,9 @@ function EditableCell({ task, col, isParent, onUpdateTask, selected, datePickFie
     );
   }
 
+  const nameEditIndent = col.key === 'name' && depth > 0
+    ? { paddingLeft: NAME_CELL_BASE_PAD + depth * INDENT_PX }
+    : null;
   return (
     <input
       ref={inputRef}
@@ -847,6 +877,7 @@ function EditableCell({ task, col, isParent, onUpdateTask, selected, datePickFie
         color: 'var(--color-text-primary)',
         border: '1px solid var(--color-accent)',
         borderRadius: 4,
+        ...nameEditIndent,
       }}
     />
   );
@@ -913,6 +944,29 @@ function ProgressBar({ value }) {
       <span className="tabular-nums text-[13px]" style={{ color: 'var(--color-text-muted)' }}>{pct}%</span>
     </div>
   );
+}
+
+function DepthGuides({ depth }) {
+  const guides = [];
+  for (let d = 0; d < depth; d++) {
+    guides.push(
+      <div
+        key={d}
+        aria-hidden="true"
+        style={{
+          position: 'absolute',
+          top: 0,
+          bottom: 0,
+          left: GUIDE_INSET + d * INDENT_PX,
+          width: 1,
+          backgroundColor: 'var(--color-border-subtle)',
+          opacity: 0.7,
+          pointerEvents: 'none',
+        }}
+      />,
+    );
+  }
+  return <>{guides}</>;
 }
 
 function ColumnPicker({ columns, visibleColumns, onToggle }) {
