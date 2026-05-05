@@ -162,41 +162,72 @@ function buildWbsTree(tasks, skipWeekends) {
     // pattern used by assignDepth(). Returning a neutral aggregate keeps the
     // caller's start/end/progress folding sane without polluting resultMap.
     if (!resultMap.has(taskId)) {
-      return { startDate: null, endDate: null, progress: 0 };
+      return { startDate: null, endDate: null, progress: 0, duration: 0 };
     }
     if (resolved.has(taskId)) {
       const t = resultMap.get(taskId);
-      return { startDate: t.startDate, endDate: t.endDate, progress: t.progress || 0 };
+      return {
+        startDate: t.startDate,
+        endDate: t.endDate,
+        progress: t.progress || 0,
+        duration: Number(t.duration) || 0,
+      };
     }
     resolved.add(taskId);
 
     const children = childrenMap.get(taskId);
     if (!children || children.length === 0) {
       const t = resultMap.get(taskId);
-      return { startDate: t.startDate, endDate: t.endDate, progress: t.progress || 0 };
+      return {
+        startDate: t.startDate,
+        endDate: t.endDate,
+        progress: t.progress || 0,
+        duration: Number(t.duration) || 0,
+      };
     }
 
     let minStart = null;
     let maxEnd = null;
+    // Weighted aggregation: a parent's progress is the share of its children's
+    // total planned duration that has been completed, i.e. sum(finished days) /
+    // sum(planned days). This matches how PM tools compute roll-up percent and
+    // ensures the parent reacts when any child's duration changes, not just its
+    // raw progress field. Falls back to a simple count-based average when no
+    // child has a positive duration (e.g. an all-milestone group).
     let totalProgress = 0;
+    let totalDuration = 0;
+    let totalFinishedDays = 0;
 
     for (const child of children) {
       const r = resolve(String(child.id));
       if (r.startDate && (!minStart || r.startDate < minStart)) minStart = r.startDate;
       if (r.endDate && (!maxEnd || r.endDate > maxEnd)) maxEnd = r.endDate;
-      totalProgress += r.progress;
+      const childDuration = Number(r.duration) || 0;
+      const childProgress = Number(r.progress) || 0;
+      totalProgress += childProgress;
+      totalDuration += childDuration;
+      totalFinishedDays += childDuration * (childProgress / 100);
     }
 
     const task = resultMap.get(taskId);
     task.isParent = true;
     task.startDate = minStart || task.startDate;
     task.endDate = maxEnd || task.endDate;
-    task.progress = children.length > 0 ? Math.round(totalProgress / children.length) : task.progress;
     task.duration = task.startDate && task.endDate
       ? workingDaysBetween(task.startDate, task.endDate, skipWeekends)
       : 0;
+    if (totalDuration > 0) {
+      task.progress = Math.round((totalFinishedDays / totalDuration) * 100);
+    } else if (children.length > 0) {
+      task.progress = Math.round(totalProgress / children.length);
+    }
 
-    return { startDate: task.startDate, endDate: task.endDate, progress: task.progress };
+    return {
+      startDate: task.startDate,
+      endDate: task.endDate,
+      progress: task.progress,
+      duration: task.duration,
+    };
   }
 
   for (const parentId of childrenMap.keys()) {
